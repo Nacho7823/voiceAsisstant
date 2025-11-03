@@ -88,7 +88,7 @@
             color: #555;
             font-size: 0.9rem;
         }
-        select, input[type="text"], textarea {
+        select, input[type="text"], input[type="password"], textarea {
             font-size: 1rem;
             padding: 0.8em;
             border: 1px solid #ddd;
@@ -192,15 +192,26 @@
                 </div>
             </div>
 
+            <!-- SECCIÓN DE LLM MODIFICADA -->
             <div class="form-group">
-                <label for="llm-api-url">URL del API del LLM (Ej: Gemini):</label>
-                <input type="text" id="llm-api-url" placeholder="https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=TU_API_KEY">
+                <label for="llm-api-url">URL de la API (Endpoint):</label>
+                <input type="text" id="llm-api-url" placeholder="Ej: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions">
             </div>
-
+            <div class="selectors">
+                <div class="form-group">
+                    <label for="llm-api-key">API Key:</label>
+                    <input type="password" id="llm-api-key" placeholder="Tu API Key (GEMINI_API_KEY, etc.)">
+                </div>
+                <div class="form-group">
+                    <label for="llm-model-name">Modelo LLM:</label>
+                    <input type="text" id="llm-model-name" placeholder="Ej: gemini-2.0-flash">
+                </div>
+            </div>
             <div class="form-group">
                 <label for="llm-prompt">Prompt del LLM (opcional):</label>
                 <textarea id="llm-prompt" rows="3" placeholder="Ej: Resume el siguiente texto en una frase:"></textarea>
             </div>
+            <!-- FIN DE SECCIÓN MODIFICADA -->
 
         </div>
 
@@ -229,14 +240,18 @@
         const llmApiUrl = document.getElementById('llm-api-url');
         const llmPrompt = document.getElementById('llm-prompt');
         const llmOutputDiv = document.getElementById('llm-output-container');
+        // Nuevos elementos para OpenAI
+        const llmApiKey = document.getElementById('llm-api-key');
+        const llmModelName = document.getElementById('llm-model-name');
+
 
         // --- Configuración de APIs y Audio ---
         const VAD_API_URL = "ws://127.0.0.1:8001/ws/vad";
         const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
         
         const SAMPLE_RATE = 16000;
-        const PRE_ROLL_TIME = 2; // Segundos de audio *antes* de speech_start (corregido)
-        const POST_ROLL_TIME = 1; // Segundos de audio *después* de speech_end (corregido)
+        const PRE_ROLL_TIME = 2; 
+        const POST_ROLL_TIME = 1;
 
         const PRE_ROLL_SAMPLES = SAMPLE_RATE * PRE_ROLL_TIME;
         
@@ -291,16 +306,18 @@
         }
         
         /**
-         * NUEVA FUNCIÓN: Envía el texto transcrito a la API del LLM.
+         * FUNCIÓN MODIFICADA: Envía el texto a una API tipo OpenAI.
          * @param {string} textFromWhisper - El texto devuelto por Whisper.
          */
         async function sendToLLM(textFromWhisper) {
             const apiUrl = llmApiUrl.value.trim();
+            const apiKey = llmApiKey.value.trim();
+            const modelName = llmModelName.value.trim();
             const userPrompt = llmPrompt.value.trim();
             
-            // Si no hay URL, no hacemos nada y volvemos a "Escuchando".
-            if (!apiUrl) {
-                log("Escuchando... (URL de LLM no configurada)", "idle");
+            // Si no hay URL, API Key o Modelo, no hacemos nada.
+            if (!apiUrl || !apiKey || !modelName) {
+                log("Escuchando... (Falta URL, API Key o Modelo de LLM)", "idle");
                 return; 
             }
 
@@ -312,31 +329,37 @@
                 fullPrompt = `${userPrompt}\n\n"${textFromWhisper}"`;
             }
 
-            // Asumimos el formato de API de Gemini (puedes cambiar esto)
+            // Payload en formato OpenAI
             const payload = {
-                contents: [{
-                    parts: [{ "text": fullPrompt }]
-                }]
+                "model": modelName,
+                "messages": [
+                    {"role": "user", "content": fullPrompt}
+                ]
+            };
+
+            // Encabezados con Autorización
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
             };
 
             try {
                 const response = await fetch(apiUrl, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: headers,
                     body: JSON.stringify(payload)
                 });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error de LLM API: ${response.statusText} - ${errorData.error.message}`);
-                }
-
                 const data = await response.json();
 
-                // Asumimos el formato de respuesta de Gemini
-                const llmText = data.candidates[0].content.parts[0].text;
+                if (!response.ok) {
+                    // Si la API devuelve un error (ej: 401, 404, 500), 'data' puede contener el mensaje
+                    let errorMsg = data.error?.message || `Error HTTP: ${response.status}`;
+                    throw new Error(errorMsg);
+                }
+
+                // Parsear respuesta formato OpenAI
+                const llmText = data.choices[0].message.content;
                 
                 if (llmText && llmText.trim()) {
                     llmOutputDiv.innerHTML += `<p>${llmText.trim()}</p>`;
@@ -395,10 +418,9 @@
                         outputDiv.scrollTop = outputDiv.scrollHeight;
                         
                         // 2. Enviar el texto al LLM
-                        await sendToLLM(trimmedText); // <-- ¡NUEVA LLAMADA!
+                        await sendToLLM(trimmedText);
                         
                     } else {
-                        // El audio estaba en silencio, volvemos a escuchar
                         log("Escuchando...", "idle");
                     }
                 } else {
@@ -451,6 +473,8 @@
             languageSelect.disabled = false;
             llmApiUrl.disabled = false;
             llmPrompt.disabled = false;
+            llmApiKey.disabled = false;
+    llmModelName.disabled = false;
         }
 
         // --- Event Listener del Botón de Inicio ---
@@ -463,6 +487,8 @@
             languageSelect.disabled = true;
             llmApiUrl.disabled = true;
             llmPrompt.disabled = true;
+            llmApiKey.disabled = true;
+            llmModelName.disabled = true;
 
             try {
                 // 1. Conectar al WebSocket de VAD
