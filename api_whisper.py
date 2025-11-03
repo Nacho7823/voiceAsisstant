@@ -4,51 +4,40 @@ from faster_whisper import WhisperModel
 import os
 import tempfile
 from typing import Literal
-from fastapi.middleware.cors import CORSMiddleware  # <-- AÑADIR ESTA LÍNEA
+from fastapi.middleware.cors import CORSMiddleware
 
 # ------------------
 # Cache local de modelos
 # ------------------
-# Directorio donde se guardarán los modelos descargados para evitar
-# descargarlos cada vez. Puedes cambiar esto a una ruta absoluta
-# si lo prefieres (ej: r"C:\models_whisper").
+SAVE_AUDIOS = True # Mantienes tu configuración
+
 BASE_DIR = os.path.dirname(__file__)
 MODELS_DIR = os.path.join(BASE_DIR, "models")
+AUDIOS_DIR = os.path.join(BASE_DIR, "audios")
 
-# Asegurarse que el directorio exista
 os.makedirs(MODELS_DIR, exist_ok=True)
+os.makedirs(AUDIOS_DIR, exist_ok=True)
 
-# Indicar a las librerías de HuggingFace / transformers que usen este
-# directorio como cache para los modelos. Esto evita descargas repetidas.
-# También establecemos XDG_CACHE_HOME por compatibilidad con algunas libs.
 os.environ.setdefault("HF_HOME", MODELS_DIR)
 os.environ.setdefault("TRANSFORMERS_CACHE", MODELS_DIR)
 os.environ.setdefault("XDG_CACHE_HOME", MODELS_DIR)
 
-# Para información del usuario en logs
 print(f"Model cache dir: {MODELS_DIR}")
 # ------------------
 
 # --- Configuración (Modifica esto según tu PC) ---
-
-# Define si usarás "cuda" (GPU NVIDIA) o "cpu"
 COMPUTE_DEVICE = "cpu"
-# Define el tipo de cómputo: "float16" para GPU, "int8" para CPU
 COMPUTE_TYPE = "int8" 
-
 # ----------------------------------------------------
 
-# Define los modelos permitidos que el usuario puede elegir
 ModelSize = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"]
 
 app = FastAPI()
 
-# --- Configuración de CORS ---                 # <-- AÑADIR ESTA LÍNEA
-# Esto permite que tu navegador (desde cualquier origen)
-# se conecte a esta API.
-origins = ["*"]  # Para desarrollo. Sé más restrictivo en producción.
+# --- Configuración de CORS ---
+origins = ["*"] 
 
-app.add_middleware(                             # <-- AÑADIR ESTA LÍNEA
+app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
@@ -57,7 +46,6 @@ app.add_middleware(                             # <-- AÑADIR ESTA LÍNEA
 )
 # -----------------------------
 
-# Usamos un diccionario como caché simple para no recargar modelos
 model_cache = {}
 
 def get_model(model_size: str) -> WhisperModel:
@@ -71,7 +59,6 @@ def get_model(model_size: str) -> WhisperModel:
             model_cache[model_size] = model
             print(f"Modelo '{model_size}' cargado y listo.")
         except Exception as e:
-            # Si falla la carga (ej: modelo no existe, VRAM insuficiente)
             raise HTTPException(
                 status_code=500, 
                 detail=f"Error al cargar el modelo {model_size}: {e}"
@@ -80,11 +67,11 @@ def get_model(model_size: str) -> WhisperModel:
 
 @app.post("/translate")
 async def translate_audio(
-    # El usuario puede elegir el modelo desde el formulario. 'base' es el default.
     model_size: ModelSize = Form("base"),
     audio_file: UploadFile = File(...),
-    # target_language acepta 'auto' (detectar), o códigos como 'es','en','fr', etc.
-    target_language: str = Form("auto")
+    # El cliente envía "" (vacío) para auto, no "auto". El default "auto"
+    # solo se usaría si el cliente NO envía el parámetro.
+    language: str = Form("auto") 
 ):
     """
     Endpoint de API para traducir audio.
@@ -92,27 +79,52 @@ async def translate_audio(
     """
     tmp_file_path = None
     try:
-        # 1. Cargar el modelo (o tomarlo del caché)
+        # 1. Cargar el modelo
         model = get_model(model_size)
 
-        # 2. Guardar el archivo de audio temporalmente
-        # Usamos tempfile para manejar archivos temporales de forma segura
-        with tempfile.NamedTemporaryFile(delete=False, suffix=audio_file.filename) as tmp_file:
-            content = await audio_file.read()
-            tmp_file.write(content)
-            tmp_file_path = tmp_file.name
+        # 2. Guardar el archivo de audio
+        if SAVE_AUDIOS:
+            os.makedirs(AUDIOS_DIR, exist_ok=True)
+            safe_name = os.path.basename(audio_file.filename) or "upload.wav"
+            dst_path = os.path.join(AUDIOS_DIR, safe_name)
+            try:
+                print(f"[audio] Guardando audio en: {dst_path}")
+                content = await audio_file.read()
+                with open(dst_path, "wb") as f:
+                    f.write(content)
+                tmp_file_path = dst_path
+                try:
+                    size = os.path.getsize(dst_path)
+                    print(f"[audio] Guardado {size} bytes en {dst_path}")
+                except Exception:
+                    print(f"[audio] Guardado en {dst_path} (tamaño desconocido)")
+            except Exception as e:
+                print(f"[audio][error] No se pudo guardar el audio en {dst_path}: {e}")
+                # Lanzamos el error para que FastAPI devuelva un 500
+                raise HTTPException(status_code=500, detail=f"Error al guardar audio: {e}")
+        else:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=audio_file.filename) as tmp_file:
+                content = await audio_file.read()
+                tmp_file.write(content)
+                tmp_file_path = tmp_file.name
+
         
         # 3. Ejecutar la transcripción/traducción.
-        # Lógica:
-        # - Si target_language == 'auto' o 'en' usamos task='translate' (traduce al inglés).
-        # - Si target_language es otro código (ej: 'es','fr'), hacemos task='transcribe'
-        #   y devolvemos la transcripción en el idioma detectado/forzado.
-        # Nota: faster-whisper soporta pasar 'language' para forzar el idioma fuente.
-        language_param = None if target_language == 'auto' else target_language
-        if target_language == 'auto' or target_language == 'en':
+        
+        # --- CORRECCIÓN DEL BUG 1 (Error 500) ---
+        # El cliente envía "" (string vacío) para 'auto-detectar'.
+        # Tratamos "" y "auto" (default) como auto-detección.
+        is_auto_detect = (language == "auto" or language == "")
+        
+        language_param = None if is_auto_detect else language
+        
+        # Si es auto-detect O el idioma es inglés, traducimos (task='translate')
+        if is_auto_detect or language == "en":
             task = "translate"
         else:
+            # Si se especifica un idioma (es, fr, de...), transcribimos (task='transcribe')
             task = "transcribe"
+        # --- FIN DE LA CORRECCIÓN ---
 
         transcribe_kwargs = { 'task': task }
         if language_param:
@@ -132,18 +144,25 @@ async def translate_audio(
         return {
             "model_used": model_size,
             "detected_language": info.language,
-            "target_language_requested": target_language,
+            "language_requested": language, # Devuelve "" si fue auto
             "task_used": task,
             "result_text": full_text.strip()
         }
 
     except Exception as e:
         # Manejo de errores
+        print(f"[ERROR] Error durante la transcripción: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        # 6. Limpiar el archivo temporal después de usarlo
-        if tmp_file_path and os.path.exists(tmp_file_path):
+        # --- CORRECCIÓN DEL BUG 2 (Borrado de archivos) ---
+        # 6. Limpiar el archivo temporal SI NO estamos guardando audios
+        if not SAVE_AUDIOS and tmp_file_path and os.path.exists(tmp_file_path):
+            print(f"Limpiando archivo temporal: {tmp_file_path}")
             os.unlink(tmp_file_path)
+        elif SAVE_AUDIOS and tmp_file_path:
+            # Si SAVE_AUDIOS es True, no lo borramos.
+            print(f"Audio conservado en: {tmp_file_path}")
+        # --- FIN DE LA CORRECCIÓN ---
 
 if __name__ == "__main__":
     print(f"--- Iniciando Servidor de API Whisper ---")
@@ -151,6 +170,6 @@ if __name__ == "__main__":
     print(f"Modelos disponibles: tiny, base, small, medium, large-v2, large-v3")
     print(f"Endpoint disponible en: http://127.0.0.1:8000/translate")
     print("Inicia con: uvicorn api_whisper:app --host 127.0.0.1 --port 8000")
-    # uvicorn.run(app, host="127.0.0.1", port=8000) # Descomenta para correr con 'python api_whisper.py'
     
-# uvicorn api_whisper:app --host 127.0.0.1 --port 8000
+    # Descomenta la siguiente línea si prefieres correr con 'python api_whisper.py'
+    # uvicorn.run(app, host="127.0.0.1", port=8000)

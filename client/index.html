@@ -3,204 +3,333 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Traductor de Voz (VAD + Whisper)</title>
+    <title>Traductor de Voz en Tiempo Real</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 2em;
+            background-color: #f4f7f6;
             display: grid;
             place-items: center;
             min-height: 90vh;
-            background: #f4f7f6;
-            color: #333;
-            margin: 0;
-            padding: 1em;
         }
         main {
+            width: 100%;
+            max-width: 800px;
             background: #ffffff;
-            padding: 2em;
             border-radius: 12px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.1);
-            width: 90%;
-            max-width: 700px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.07);
+            padding: 2.5em;
+            border: 1px solid #e0e0e0;
         }
         h1 {
-            margin-top: 0;
+            color: #2c3e50;
             text-align: center;
-            color: #222;
+            margin-top: 0;
+            margin-bottom: 1.5em;
         }
         .controls {
             display: flex;
-            flex-wrap: wrap;
-            justify-content: space-between;
-            align-items: center;
-            gap: 1em;
-            padding: 1.5em;
-            background: #f9f9f9;
-            border-radius: 8px;
-            margin-bottom: 1.5em;
+            flex-direction: column;
+            gap: 1.5em;
+            margin-bottom: 2em;
         }
-        .controls .buttons {
+        .buttons {
             display: flex;
             gap: 1em;
         }
         button {
             font-size: 1rem;
-            font-weight: 600;
-            padding: 0.8em 1.2em;
-            border: none;
+            padding: 0.8em 1.5em;
             border-radius: 8px;
+            border: none;
             cursor: pointer;
-            transition: background-color 0.2s, transform 0.2s;
+            transition: all 0.2s ease;
+            font-weight: 600;
         }
-        #start-btn { background-color: #007aff; color: white; }
-        #start-btn:disabled { background-color: #cce4ff; cursor: not-allowed; }
-        #stop-btn { background-color: #e5e5e5; color: #333; }
-        #stop-btn:disabled { background-color: #f5f5f5; cursor: not-allowed; }
-        button:hover:not(:disabled) { transform: translateY(-2px); }
+        #start-btn {
+            background-color: #27ae60;
+            color: white;
+            flex-grow: 1;
+        }
+        #start-btn:hover { background-color: #2ecc71; }
+        #start-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
         
-        .form-group { display: flex; flex-direction: column; gap: 0.3em; }
-        label { font-size: 0.9em; font-weight: 500; color: #555; }
-        select { font-size: 1rem; padding: 0.5em; border-radius: 6px; border: 1px solid #ddd; }
-
+        #stop-btn {
+            background-color: #c0392b;
+            color: white;
+            flex-grow: 1;
+        }
+        #stop-btn:hover { background-color: #e74c3c; }
+        #stop-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
+        
+        .selectors {
+            display: flex;
+            gap: 1em;
+            justify-content: space-between;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+            flex-grow: 1;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+            font-size: 0.9rem;
+        }
+        select {
+            font-size: 1rem;
+            padding: 0.8em;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fff;
+            width: 100%;
+        }
         .status {
             display: flex;
             align-items: center;
+            justify-content: center;
             gap: 0.8em;
             margin-bottom: 1.5em;
-            padding: 1em;
-            background: #f9f9f9;
-            border-radius: 8px;
+            min-height: 25px;
         }
-        #status-light {
+        .vad-light {
             width: 20px;
             height: 20px;
+            background-color: #bdc3c7; /* Gris */
             border-radius: 50%;
-            background: #dcdcdc; /* Gris */
             transition: background-color 0.2s;
         }
-        #status-light.speaking { background: #34c759; } /* Verde */
-        #status-light.processing { background: #ff9500; } /* Naranja */
-        
-        #log {
-            font-family: monospace;
-            font-size: 0.95em;
-            font-weight: 500;
-            color: #444;
+        .vad-light.speaking {
+            background-color: #27ae60; /* Verde */
+            animation: pulse 1s infinite;
         }
-
+        #status-log {
+            font-size: 1rem;
+            color: #34495e;
+            font-weight: 500;
+        }
         #output-container {
-            background: #fafafa;
-            border: 1px solid #eee;
+            background: #f9f9f9;
+            border: 1px solid #e0e0e0;
             border-radius: 8px;
-            padding: 1em;
             min-height: 150px;
-            max-height: 400px;
+            max-height: 300px;
             overflow-y: auto;
+            padding: 1.5em;
+            color: #2c3e50;
             line-height: 1.6;
-            color: #111;
+        }
+        #output-container p {
+            margin: 0 0 0.8em 0;
+            padding-bottom: 0.8em;
+            border-bottom: 1px solid #eee;
+        }
+        #output-container p:last-child {
+            margin-bottom: 0;
+            border-bottom: none;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(39, 174, 96, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0); }
         }
     </style>
 </head>
 <body>
+
     <main>
         <h1>Traductor de Voz en Tiempo Real</h1>
-        
+
         <div class="controls">
             <div class="buttons">
                 <button id="start-btn">Iniciar Traducción</button>
                 <button id="stop-btn" disabled>Detener</button>
             </div>
-            <div class="form-group">
-                <label for="model-select">Modelo Whisper:</label>
-                <select id="model-select">
-                    <option value="tiny">Tiny</option>
-                    <option value="base" selected>Base</option>
-                    <option value="small">Small</option>
-                    <option value="medium">Medium</option>
-                    <option value="large-v3">Large-v3</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="language-select">Idioma (Fuente):</label>
-                <select id="language-select">
-                    <option value="">Auto-Detectar</option>
-                    <option value="es">Español</option>
-                    <option value="en">Inglés</option>
-                    <option value="fr">Francés</option>
-                    <option value="de">Alemán</option>
-                    <option value="ja">Japonés</option>
-                    <option value="zh">Chino</option>
-                    <option value="it">Italiano</option>
-                </select>
+            <div class="selectors">
+                <div class="form-group">
+                    <label for="model-select">Modelo Whisper:</label>
+                    <select id="model-select">
+                        <option value="tiny">Tiny</option>
+                        <option value="base" selected>Base</option>
+                        <option value="small">Small</option>
+                        <option value="medium">Medium</option>
+                        <option value="large-v3">Large-v3</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="language-select">Idioma (Fuente):</label>
+                    <select id="language-select">
+                        <option value="">Auto-Detectar</option>
+                        <option value="es">Español</option>
+                        <option value="en">Inglés</option>
+                        <option value="fr">Francés</option>
+                        <option value="de">Alemán</option>
+                        <option value="ja">Japonés</option>
+                        <option value="zh">Chino</option>
+                        <option value="it">Italiano</option>
+                    </select>
+                </div>
             </div>
         </div>
 
         <div class="status">
-            <div id="status-light" title="Gris: Inactivo. Verde: Hablando. Naranja: Procesando."></div>
-            <div id="log">Haz clic en Iniciar...</div>
+            <div class="vad-light" id="vad-light"></div>
+            <div id="status-log">Haz clic en "Iniciar" para comenzar</div>
         </div>
 
         <div id="output-container"></div>
     </main>
 
     <script type="module">
-        // --- Elementos del DOM ---
+        // --- Referencias al DOM ---
         const startBtn = document.getElementById('start-btn');
         const stopBtn = document.getElementById('stop-btn');
-        const statusLight = document.getElementById('status-light');
-        const logDiv = document.getElementById('log');
+        const statusLog = document.getElementById('status-log');
+        const vadLight = document.getElementById('vad-light');
         const outputDiv = document.getElementById('output-container');
         const modelSelect = document.getElementById('model-select');
         const languageSelect = document.getElementById('language-select');
 
-        // --- Configuración de APIs ---
+        // --- Configuración de APIs y Audio ---
         const VAD_API_URL = "ws://127.0.0.1:8001/ws/vad";
         const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
+        
         const SAMPLE_RATE = 16000;
+        const PRE_ROLL_TIME = 3; // Segundos de audio *antes* de speech_start
+        const POST_ROLL_TIME = 3; // Segundos de audio *después* de speech_end
 
-        // --- Estado Global ---
+        // Convertir tiempo a muestras
+        const PRE_ROLL_SAMPLES = SAMPLE_RATE * PRE_ROLL_TIME;
+        
+        // --- Variables de Estado Globales ---
         let socket = null;
         let audioContext = null;
         let workletNode = null;
         let mediaStreamSource = null;
 
-        let isSpeaking = false;
-        let audioBuffer = []; // Almacena chunks de Float32Array
+        // Buffers de audio:
+        // preRollBuffer: Almacena constantemente los últimos 2 seg
+        let preRollBuffer = new Float32Array(0);
+        // speechBuffer: Almacena el audio que se enviará a Whisper
+        let speechBuffer = new Float32Array(0);
+        
+        // Estado de grabación (controlado por VAD)
+        let isRecording = false;
+        // Temporizador para el post-roll
+        let postRollTimer = null;
 
-        // --- Código del AudioWorklet ---
-        const workletCode = `
-            class VADAudioProcessor extends AudioWorkletProcessor {
-                constructor() { super(); }
-                process(inputs, outputs, parameters) {
-                    const inputChannel = inputs[0][0];
-                    if (inputChannel) {
-                        this.port.postMessage(inputChannel.buffer, [inputChannel.buffer]);
-                    }
-                    return true;
-                }
+        /**
+         * Actualiza el log de estado y el estilo de la luz VAD.
+         * @param {string} message - El texto a mostrar.
+         * @param {'idle' | 'processing' | 'error' | 'speaking'} state - El estado visual.
+         */
+        function log(message, state = 'idle') {
+            statusLog.textContent = message;
+            if (state === 'speaking') {
+                vadLight.classList.add('speaking');
+            } else {
+                vadLight.classList.remove('speaking');
             }
-            registerProcessor('vad-audio-processor', VADAudioProcessor);
-        `;
-
-        // --- Funciones de Utilidad ---
-
-        function log(message, state = "idle") {
-            console.log(message);
-            logDiv.textContent = message;
-            
-            statusLight.classList.remove("speaking", "processing");
-            if (state === "speaking") {
-                statusLight.classList.add("speaking");
-            } else if (state === "processing") {
-                statusLight.classList.add("processing");
+            if (state === 'error') {
+                statusLog.style.color = '#c0392b';
+            } else {
+                statusLog.style.color = '#34495e';
             }
         }
 
         /**
-         * Función de limpieza. Cierra todo.
+         * Maneja los datos de audio entrantes desde el AudioWorklet.
+         * @param {Float32Array} audioData - El chunk de audio del micrófono.
+         */
+        function handleAudioData(audioData) {
+            if (isRecording) {
+                // Si estamos grabando (VAD activo), añadir al speechBuffer
+                const newBuffer = new Float32Array(speechBuffer.length + audioData.length);
+                newBuffer.set(speechBuffer);
+                newBuffer.set(audioData, speechBuffer.length);
+                speechBuffer = newBuffer;
+            } else {
+                // Si no estamos grabando, añadir al preRollBuffer
+                const newBuffer = new Float32Array(preRollBuffer.length + audioData.length);
+                newBuffer.set(preRollBuffer);
+                newBuffer.set(audioData, preRollBuffer.length);
+                
+                // Recortar el preRollBuffer para que contenga solo los últimos PRE_ROLL_SAMPLES
+                if (newBuffer.length > PRE_ROLL_SAMPLES) {
+                    preRollBuffer = newBuffer.slice(newBuffer.length - PRE_ROLL_SAMPLES);
+                } else {
+                    preRollBuffer = newBuffer;
+                }
+            }
+        }
+        
+        /**
+         * Envía el audio acumulado a la API de Whisper.
+         * Esta función se llama por el temporizador de post-roll.
+         */
+        async function sendToWhisper() {
+            if (speechBuffer.length < SAMPLE_RATE * 0.5) { // No enviar si es menos de 0.5 seg
+                log("Audio demasiado corto, descartado.", "idle");
+                speechBuffer = new Float32Array(0); // Limpiar buffer
+                return;
+            }
+            
+            log("Traduciendo audio...", "processing");
+            
+            // Crear el Blob WAV
+            const wavBlob = createWavBlob(speechBuffer, SAMPLE_RATE);
+            
+            // Limpiar el speechBuffer INMEDIATAMENTE después de crear el Blob
+            speechBuffer = new Float32Array(0);
+            
+            const formData = new FormData();
+            formData.append('audio_file', wavBlob, 'segment.wav');
+            formData.append('model_size', modelSelect.value);
+            formData.append('language', languageSelect.value);
+
+            try {
+                const response = await fetch(WHISPER_API_URL, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error de red: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                
+                // CAMBIO: Se busca 'data.result_text'
+                const translationText = data.result_text; 
+
+                // Verificar que 'translationText' sea un string antes de usar .trim()
+                if (typeof translationText === 'string') {
+                    const trimmedText = translationText.trim();
+                    if (trimmedText) {
+                        outputDiv.innerHTML += `<p>${trimmedText}</p>`;
+                        outputDiv.scrollTop = outputDiv.scrollHeight; // Auto-scroll
+                    }
+                    // Si trimmedText está vacío (audio silencioso), no se muestra nada.
+                } else {
+                    console.warn("La respuesta de Whisper no contenía una clave 'result_text' válida.");
+                }
+                
+                log("Escuchando...", "idle");
+
+            } catch (error) {
+                console.error('Error al enviar a Whisper:', error);
+                log(`Error de Whisper: ${error.message}`, "error");
+            }
+        }
+
+        /**
+         * Función para detener todo (botón de stop o error).
          */
         function stopDetection() {
-            log("Traducción detenida.");
             if (socket) {
                 socket.close();
                 socket = null;
@@ -211,245 +340,184 @@
                 workletNode = null;
             }
             if (mediaStreamSource) {
-                mediaStreamSource.disconnect();
                 mediaStreamSource.mediaStream.getTracks().forEach(track => track.stop());
+                mediaStreamSource.disconnect();
                 mediaStreamSource = null;
             }
             if (audioContext) {
                 audioContext.close();
                 audioContext = null;
             }
+            if (postRollTimer) {
+                clearTimeout(postRollTimer);
+                postRollTimer = null;
+            }
             
-            isSpeaking = false;
-            audioBuffer = [];
-            stopBtn.disabled = true;
+            // Limpiar buffers y estado
+            preRollBuffer = new Float32Array(0);
+            speechBuffer = new Float32Array(0);
+            isRecording = false;
+
+            log('Haz clic en "Iniciar" para comenzar', 'idle');
             startBtn.disabled = false;
+            stopBtn.disabled = true;
             modelSelect.disabled = false;
             languageSelect.disabled = false;
         }
 
-        /**
-         * Envía el audio grabado a la API de Whisper.
-         */
-        async function sendToWhisper() {
-            if (audioBuffer.length === 0) {
-                log("No se grabó audio, intentando de nuevo...", "idle");
-                return;
-            }
-            
-            log("Traduciendo audio...", "processing");
-
-            // 1. Combinar todos los chunks de audio en un solo Float32Array
-            const totalSamples = audioBuffer.reduce((sum, arr) => sum + arr.length, 0);
-            const combinedAudio = new Float32Array(totalSamples);
-            
-            let offset = 0;
-            for (const chunk of audioBuffer) {
-                combinedAudio.set(chunk, offset);
-                offset += chunk.length;
-            }
-            
-            // 2. Limpiar el buffer para la próxima grabación
-            audioBuffer = [];
-            
-            // 3. Convertir el audio a un Blob WAV
-            const wavBlob = createWavBlob(combinedAudio, SAMPLE_RATE);
-            
-            // 4. Crear FormData y enviarlo a la API de Whisper
-            const formData = new FormData();
-            formData.append('audio_file', wavBlob, 'segment.wav');
-            formData.append('model_size', modelSelect.value);
-            formData.append('target_language', languageSelect.value);
-
-            try {
-                const response = await fetch(WHISPER_API_URL, {
-                    method: 'POST',
-                    body: formData,
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.detail || "Error del servidor Whisper");
-                }
-
-                const data = await response.json();
-                
-                // 5. Mostrar la traducción (¡Corrección!)
-                // CAMBIO: Se busca 'data.result_text' en lugar de 'data.translation'
-                // para coincidir con la respuesta de tu API.
-                const translationText = data.result_text; 
-
-                // Verificar que 'translationText' sea un string antes de usar .trim()
-                if (typeof translationText === 'string') {
-                    const trimmedText = translationText.trim();
-                    if (trimmedText) {
-                        outputDiv.innerHTML += `<p>${trimmedText}</p>`;
-                        outputDiv.scrollTop = outputDiv.scrollHeight; // Auto-scroll
-                    }
-                    // Si trimmedText está vacío (audio silencioso), no se muestra nada, pero no hay error.
-                } else {
-                    // Si data.result_text era undefined o null, se registra en la consola.
-                    console.warn("La respuesta de Whisper no contenía una clave 'result_text' válida.");
-                }
-                
-                log("Escuchando...", "idle");
-
-            } catch (error) {
-                log(`Error de Whisper: ${error.message}`, "idle");
-                console.error("Error al enviar a Whisper:", error);
-            }
-        }
-
-        // --- Lógica Principal ---
-
+        // --- Event Listener del Botón de Inicio ---
         startBtn.addEventListener('click', async () => {
             log("Iniciando...", "processing");
             startBtn.disabled = true;
-            modelSelect.disabled = true; // Bloquear selector mientras corre
+            stopBtn.disabled = false;
+            modelSelect.disabled = true;
             languageSelect.disabled = true;
 
             try {
-                // 1. Configurar AudioContext y Worklet
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: SAMPLE_RATE
-                });
-                
-                if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-
-                const workletURL = 'data:application/javascript,' + encodeURIComponent(workletCode);
-                await audioContext.audioWorklet.addModule(workletURL);
-                workletNode = new AudioWorkletNode(audioContext, 'vad-audio-processor');
-
-                // 2. Conectar al WebSocket VAD
-                log("Conectando al servidor VAD...", "processing");
+                // 1. Conectar al WebSocket de VAD
                 socket = new WebSocket(VAD_API_URL);
 
-                socket.onerror = (err) => {
-                    log("Error de VAD. ¿Servidor VAD corriendo?");
-                    console.error(err);
+                socket.onopen = () => {
+                    log("VAD conectado. Solicitando micrófono...", "processing");
+                };
+
+                socket.onclose = () => {
+                    log("VAD desconectado.", "idle");
                     stopDetection();
                 };
-                
-                socket.onclose = () => {
-                    log("Desconectado del servidor VAD.");
-                    if (startBtn.disabled) { stopDetection(); }
+
+                socket.onerror = (err) => {
+                    log("Error de WebSocket VAD.", "error");
+                    console.error("Error de WebSocket:", err);
+                    stopDetection();
                 };
-                
-                // 3. Definir cómo manejar los mensajes del VAD
+
+                // 2. Escuchar eventos del servidor VAD
                 socket.onmessage = (event) => {
                     const msg = JSON.parse(event.data);
                     
                     if (msg.event === "speech_start") {
-                        log("¡Habla ahora!", "speaking");
-                        isSpeaking = true;
-                        audioBuffer = []; // Empezar un nuevo segmento
-                    
+                        log("Hablando...", "speaking");
+                        
+                        // Si hay un temporizador de post-roll corriendo, cancelarlo.
+                        // Esto une frases que están muy juntas.
+                        if (postRollTimer) {
+                            clearTimeout(postRollTimer);
+                            postRollTimer = null;
+                        }
+
+                        // Si no estábamos grabando, volcamos el pre-roll
+                        if (!isRecording) {
+                            speechBuffer = new Float32Array(preRollBuffer);
+                        }
+                        
+                        isRecording = true;
+
                     } else if (msg.event === "speech_end") {
-                        if (!isSpeaking) return; // Ignorar si ya se procesó
-                        log("Fin de voz detectado.", "processing");
-                        isSpeaking = false;
-                        sendToWhisper(); // Enviar el segmento grabado a Whisper
-                    
+                        log("Fin de voz detectado...", "processing");
+                        
+                        // Solo si estábamos grabando, iniciamos el post-roll
+                        if (isRecording) {
+                            isRecording = false;
+                            
+                            // Iniciar temporizador para enviar a Whisper
+                            postRollTimer = setTimeout(() => {
+                                sendToWhisper();
+                                postRollTimer = null;
+                            }, POST_ROLL_TIME * 1000);
+                        }
                     } else if (msg.error) {
-                        log(`Error del servidor VAD: ${msg.error}`);
+                        log(`Error del servidor VAD: ${msg.error}`, "error");
                     }
                 };
+
+                // 3. Configurar AudioContext y Worklet
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: SAMPLE_RATE
+                });
                 
-                await new Promise((resolve) => { socket.onopen = resolve; });
+                // Política de Autoplay: Reanudar el contexto
+                await audioContext.resume();
 
-                // 4. Obtener micrófono
-                log("Solicitando micrófono...", "processing");
+                // 4. Crear el Worklet
+                const workletURL = URL.createObjectURL(new Blob([`
+                    class VADAudioProcessor extends AudioWorkletProcessor {
+                        process(inputs, outputs, parameters) {
+                            const inputChannel = inputs[0][0];
+                            if (inputChannel) {
+                                this.port.postMessage(inputChannel);
+                            }
+                            return true;
+                        }
+                    }
+                    registerProcessor('vad-audio-processor', VADAudioProcessor);
+                `], { type: 'application/javascript' }));
+
+                await audioContext.audioWorklet.addModule(workletURL);
+
+                workletNode = new AudioWorkletNode(audioContext, 'vad-audio-processor');
+
+                // 5. Configurar el listener del Worklet
+                workletNode.port.onmessage = (event) => {
+                    // event.data es un Float32Array
+                    handleAudioData(event.data);
+                    
+                    // Enviar audio al servidor VAD
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(event.data.buffer);
+                    }
+                };
+
+                // 6. Obtener micrófono y conectar el grafo de audio
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
+                
+                // Comprobar si el contexto sigue vivo (evitar race condition)
                 if (!audioContext) {
-                    throw new Error("El contexto de audio se cerró por error de conexión.");
+                    throw new Error("El contexto de audio se cerró debido a un error de conexión.");
                 }
 
-                // 5. Conectar todo el grafo de audio
                 mediaStreamSource = audioContext.createMediaStreamSource(stream);
                 mediaStreamSource.connect(workletNode);
                 workletNode.connect(audioContext.destination);
 
-                // 6. Definir cómo manejar el audio del Worklet
-                workletNode.port.onmessage = (event) => {
-                    const audioDataBuffer = event.data; // ArrayBuffer
-                    
-                    // 6a. Enviar audio al VAD
-                    if (socket && socket.readyState === WebSocket.OPEN) {
-                        socket.send(audioDataBuffer);
-                    }
-                    
-                    // 6b. Guardar audio en el buffer si estamos hablando
-                    if (isSpeaking) {
-                        // Creamos una copia del buffer para almacenarla
-                        audioBuffer.push(new Float32Array(audioDataBuffer));
-                    }
-                };
-
-                log("Escuchando...", "idle");
-                stopBtn.disabled = false;
+                log("Micrófono activo. Escuchando...", "idle");
 
             } catch (error) {
-                log(`Error: ${error.message}`, "idle");
-                console.error(error);
+                log(`Error al iniciar: ${error.message}`, "error");
+                console.error("Error en startBtn:", error);
                 stopDetection();
             }
         });
 
         stopBtn.addEventListener('click', stopDetection);
 
-        
-        // --- FUNCIONES PARA CREAR WAV (copiadas) ---
 
+        // --- Funciones de Utilidad (Crear WAV) ---
         function createWavBlob(audioData, sampleRate) {
             const buffer = new ArrayBuffer(44 + audioData.length * 2);
             const view = new DataView(buffer);
-
-            /* RIFF identifier */
+            
             writeString(view, 0, 'RIFF');
-            /* file length */
             view.setUint32(4, 36 + audioData.length * 2, true);
-            /* RIFF type */
             writeString(view, 8, 'WAVE');
-            /* format chunk identifier */
             writeString(view, 12, 'fmt ');
-            /* format chunk length */
             view.setUint32(16, 16, true);
-            /* sample format (1 == PCM) */
-            view.setUint16(20, 1, true);
-            /* channel count */
-            view.setUint16(22, 1, true);
-            /* sample rate */
+            view.setUint16(20, 1, true); // PCM
+            view.setUint16(22, 1, true); // 1 canal
             view.setUint32(24, sampleRate, true);
-            /* byte rate (sample rate * block align) */
-            view.setUint32(28, sampleRate * 4, true); // Corregido: sampleRate * 2 (bytes/sample) * 1 (canal) -- NO, debe ser sampleRate * 2 * 1 = 32000. 
-                                                     // Pero el VAD/Whisper es mono, 16 bits -> 2 bytes. Block align es 2. Byte rate es sampleRate * blockAlign.
-                                                     // Ah, no. Byte rate = sampleRate * numChannels * bitsPerSample/8. 
-                                                     // (16000 * 1 * 16 / 8) = 32000.
-                                                     // Block align = numChannels * bitsPerSample/8. (1 * 16 / 8) = 2.
-            
-            // Re-calculando:
-            const blockAlign = 1 * 2; // 1 canal * 2 bytes (16 bits)
-            const byteRate = sampleRate * blockAlign;
-            
-            view.setUint32(28, byteRate, true); // Byte Rate
-            view.setUint16(32, blockAlign, true); // Block Align
-            view.setUint16(34, 16, true); // bits per sample
-            
-            /* data chunk identifier */
+            view.setUint32(28, sampleRate * 2, true); // Byte rate
+            view.setUint16(32, 2, true); // Block align
+            view.setUint16(34, 16, true); // 16-bit
             writeString(view, 36, 'data');
-            /* data chunk length */
             view.setUint32(40, audioData.length * 2, true);
-
+            
             // Escribir las muestras PCM
             let offset = 44;
             for (let i = 0; i < audioData.length; i++, offset += 2) {
                 const s = Math.max(-1, Math.min(1, audioData[i]));
                 view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
             }
-
+            
             return new Blob([view], { type: 'audio/wav' });
         }
 
