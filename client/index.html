@@ -72,7 +72,6 @@
         #stop-btn:hover { background-color: #e74c3c; }
         #stop-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
         
-        /* --- NUEVO ESTILO PARA EL BOTÓN LIMPIAR --- */
         #clear-btn {
             background-color: #7f8c8d; /* Gris */
             color: white;
@@ -110,6 +109,25 @@
             font-family: inherit;
             resize: vertical;
         }
+        /* Estilo para el toggle de TTS */
+        .form-group-toggle {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 0.8em;
+        }
+        .form-group-toggle input[type="checkbox"] {
+            width: auto;
+            height: 1.2em;
+            width: 1.2em;
+        }
+        .form-group-toggle label {
+            font-weight: 500;
+            font-size: 1rem;
+            color: #34495e;
+        }
+
+
         .status {
             display: flex;
             align-items: center;
@@ -135,7 +153,6 @@
             font-weight: 500;
         }
         
-        /* --- ESTILOS DE CHAT MODIFICADOS --- */
         #chat-container {
             background: #f9f9f9;
             border: 1px solid #e0e0e0;
@@ -172,7 +189,6 @@
             border-bottom-left-radius: 4px;
             align-self: flex-start;
         }
-        /* --- FIN DE ESTILOS DE CHAT --- */
 
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.7); }
@@ -238,6 +254,13 @@
                 <textarea id="llm-prompt" rows="3" placeholder="Ej: Resume el siguiente texto en una frase:"></textarea>
             </div>
             <!-- FIN DE SECCIÓN MODIFICADA -->
+            
+            <!-- INICIO DE ADICIÓN: TOGGLE DE TTS -->
+            <div class="form-group-toggle">
+                <input type="checkbox" id="tts-toggle" checked>
+                <label for="tts-toggle">Habilitar Voz (TTS) del Asistente</label>
+            </div>
+            <!-- FIN DE ADICIÓN -->
 
         </div>
 
@@ -246,14 +269,12 @@
             <div id="status-log">Haz clic en "Iniciar" para comenzar</div>
         </div>
         
-        <!-- CONTENEDOR DE CHAT MODIFICADO -->
         <!-- H2 MODIFICADO PARA INCLUIR EL BOTÓN -->
         <h2 style="display: flex; justify-content: space-between; align-items: center;">
             Conversación
             <button id="clear-btn">Limpiar</button>
         </h2>
         <div id="chat-container"></div>
-        <!-- FIN DE CONTENEDOR MODIFICADO -->
 
     </main>
 
@@ -271,9 +292,11 @@
         const llmApiKey = document.getElementById('llm-api-key');
         const llmModelName = document.getElementById('llm-model-name');
         
-        // --- NUEVA REFERENCIA DE CHAT ---
         const chatContainer = document.getElementById('chat-container');
-        const clearBtn = document.getElementById('clear-btn'); // <-- AÑADIDO
+        const clearBtn = document.getElementById('clear-btn');
+        
+        // --- AÑADIDO: Referencia al Toggle de TTS ---
+        const ttsToggle = document.getElementById('tts-toggle');
 
 
         // --- Configuración de APIs y Audio ---
@@ -281,8 +304,8 @@
         const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
         
         const SAMPLE_RATE = 16000;
-        const PRE_ROLL_TIME = 1; 
-        const POST_ROLL_TIME = 2;
+        const PRE_ROLL_TIME = 2; // Segundos de audio *antes* de 'speech_start'
+        const POST_ROLL_TIME = 1; // Segundos de audio *después* de 'speech_end'
 
         const PRE_ROLL_SAMPLES = SAMPLE_RATE * PRE_ROLL_TIME;
         
@@ -315,7 +338,7 @@
         }
 
         /**
-         * NUEVA FUNCIÓN: Añade un mensaje al contenedor de chat.
+         * Añade un mensaje al contenedor de chat.
          * @param {string} role - 'user', 'assistant', o 'error'
          * @param {string} text - El contenido del mensaje
          */
@@ -328,21 +351,88 @@
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
 
+        // --- FUNCIÓN DE TEXTO-A-VOZ (TTS) ---
+        /**
+         * Convierte texto a voz usando la Web Speech API.
+         * @param {string} text - El texto a reproducir.
+         */
+        function speakText(text) {
+            if (!('speechSynthesis' in window)) {
+                console.warn("La Síntesis de Voz (TTS) no es soportada por este navegador.");
+                return;
+            }
+            
+            // Cancelar cualquier voz que se esté reproduciendo
+            window.speechSynthesis.cancel();
+
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // --- INICIO DE LA CORRECCIÓN ---
+            // 1. Determinar el idioma de salida
+            const selectedLangCode = languageSelect.value;
+            let targetLang = 'en-US'; // Default para "Auto" (translate) o "Inglés"
+            
+            // Si el idioma de origen NO es 'auto' o 'en', la tarea es 'transcribe',
+            // por lo que el idioma de salida es el mismo que el de entrada.
+            if (selectedLangCode && selectedLangCode !== 'en') {
+                targetLang = selectedLangCode; // ej: 'es', 'fr', 'de'
+            }
+            
+            // 2. Asignar el idioma al 'utterance'
+            utterance.lang = targetLang;
+            
+            // 3. Intentar encontrar la mejor voz para ese idioma
+            // Usamos startsWith para encontrar 'es-ES' o 'es-MX' si targetLang es 'es'
+            let voice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith(targetLang));
+            
+            if (voice) {
+                utterance.voice = voice;
+            } else {
+                // Fallback si no se encuentra una voz específica (ej: 'es' no encuentra 'es-ES')
+                // Trata de encontrar una voz del idioma base (ej: 'es' de 'es-419')
+                const baseLang = targetLang.split('-')[0];
+                voice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith(baseLang));
+                if(voice) {
+                    utterance.voice = voice;
+                } else {
+                    console.warn(`No se encontró voz TTS para ${targetLang}. Usando el default del navegador.`);
+                }
+            }
+            // --- FIN DE LA CORRECCIÓN ---
+
+            utterance.pitch = 1;
+            utterance.rate = 1; // Velocidad (1 = normal)
+            
+            window.speechSynthesis.speak(utterance);
+        }
+        
+        // Cargar las voces la primera vez (algunos navegadores las cargan de forma asíncrona)
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = () => {
+                window.speechSynthesis.getVoices();
+            };
+        }
+        // --- FIN DE LA FUNCIÓN TTS ---
+
 
         /**
          * Maneja los datos de audio entrantes desde el AudioWorklet.
+         * Almacena audio en el pre-roll o en el buffer de voz principal.
          */
         function handleAudioData(audioData) {
+            // Si estamos grabando activamente, añade al buffer de voz
             if (isRecording) {
                 const newBuffer = new Float32Array(speechBuffer.length + audioData.length);
                 newBuffer.set(speechBuffer);
                 newBuffer.set(audioData, speechBuffer.length);
                 speechBuffer = newBuffer;
             } else {
+                // Si no, añade al buffer de pre-roll (búfer rodante)
                 const newBuffer = new Float32Array(preRollBuffer.length + audioData.length);
                 newBuffer.set(preRollBuffer);
                 newBuffer.set(audioData, preRollBuffer.length);
                 
+                // Mantener el pre-roll a un tamaño máximo (PRE_ROLL_SAMPLES)
                 if (newBuffer.length > PRE_ROLL_SAMPLES) {
                     preRollBuffer = newBuffer.slice(newBuffer.length - PRE_ROLL_SAMPLES);
                 } else {
@@ -363,13 +453,14 @@
             
             if (!apiUrl || !apiKey || !modelName) {
                 log("Escuchando... (Falta URL, API Key o Modelo de LLM)", "idle");
-                return; 
+                return; // No hacer nada si falta configuración
             }
 
             log("Enviando a LLM...", "processing");
 
             let fullPrompt = textFromWhisper;
             if (userPrompt) {
+                // Combina el prompt del usuario con el texto de Whisper
                 fullPrompt = `${userPrompt}\n\n"${textFromWhisper}"`;
             }
 
@@ -402,8 +493,14 @@
                 const llmText = data.choices[0].message.content;
                 
                 if (llmText && llmText.trim()) {
-                    // MODIFICADO: Añadir burbuja de asistente
-                    addMessageToChat('assistant', llmText.trim());
+                    const trimmedLlmText = llmText.trim();
+                    addMessageToChat('assistant', trimmedLlmText);
+                    
+                    // --- MODIFICACIÓN: Comprobar el toggle antes de hablar ---
+                    if (ttsToggle.checked) {
+                        speakText(trimmedLlmText);
+                    }
+                    // --- FIN DE LA MODIFICACIÓN ---
                 }
 
                 log("Escuchando...", "idle"); 
@@ -411,7 +508,6 @@
             } catch (error) {
                 console.error('Error al enviar a LLM:', error);
                 log(`Error de LLM: ${error.message}`, "error");
-                // MODIFICADO: Añadir burbuja de error
                 addMessageToChat('error', `Error de LLM: ${error.message}`);
             }
         }
@@ -421,16 +517,17 @@
          * Envía el audio acumulado a la API de Whisper.
          */
         async function sendToWhisper() {
+            // No enviar si el audio es demasiado corto (ej: menos de medio segundo)
             if (speechBuffer.length < SAMPLE_RATE * 0.5) { 
                 log("Audio demasiado corto, descartado.", "idle");
-                speechBuffer = new Float32Array(0); 
+                speechBuffer = new Float32Array(0); // Limpiar buffer
                 return;
             }
             
             log("Traduciendo (Whisper)...", "processing");
             
             const wavBlob = createWavBlob(speechBuffer, SAMPLE_RATE);
-            speechBuffer = new Float32Array(0);
+            speechBuffer = new Float32Array(0); // Limpiar buffer
             
             const formData = new FormData();
             formData.append('audio_file', wavBlob, 'segment.wav');
@@ -450,16 +547,18 @@
                 const data = await response.json();
                 const translationText = data.result_text; 
 
+                // Comprobar que 'result_text' existe
                 if (typeof translationText === 'string') {
                     const trimmedText = translationText.trim();
                     if (trimmedText) {
-                        // MODIFICADO: Añadir burbuja de usuario
+                        // Añadir transcripción al chat
                         addMessageToChat('user', trimmedText);
                         
                         // Enviar el texto al LLM
                         await sendToLLM(trimmedText);
                         
                     } else {
+                        // El audio era silencio
                         log("Escuchando...", "idle");
                     }
                 } else {
@@ -470,7 +569,6 @@
             } catch (error) {
                 console.error('Error al enviar a Whisper:', error);
                 log(`Error de Whisper: ${error.message}`, "error");
-                // MODIFICADO: Añadir burbuja de error
                 addMessageToChat('error', `Error de Whisper: ${error.message}`);
             }
         }
@@ -479,6 +577,11 @@
          * Función para detener todo (botón de stop o error).
          */
         function stopDetection() {
+            // Detener TTS si se está reproduciendo
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+            }
+
             if (socket) {
                 socket.close();
                 socket = null;
@@ -502,6 +605,7 @@
                 postRollTimer = null;
             }
             
+            // Limpiar todos los búferes
             preRollBuffer = new Float32Array(0);
             speechBuffer = new Float32Array(0);
             isRecording = false;
@@ -516,10 +620,17 @@
             llmPrompt.disabled = false;
             llmApiKey.disabled = false;
             llmModelName.disabled = false;
+            // --- AÑADIDO: Habilitar el toggle de TTS ---
+            ttsToggle.disabled = false;
         }
 
         // --- Event Listener del Botón de Inicio ---
         startBtn.addEventListener('click', async () => {
+            // Detener TTS si se está reproduciendo
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+            }
+
             log("Iniciando...", "processing");
             startBtn.disabled = true;
             stopBtn.disabled = false;
@@ -530,6 +641,8 @@
             llmPrompt.disabled = true;
             llmApiKey.disabled = true;
             llmModelName.disabled = true;
+            // --- AÑADIDO: Deshabilitar el toggle de TTS ---
+            ttsToggle.disabled = true;
 
             try {
                 // 1. Conectar al WebSocket de VAD
@@ -555,24 +668,27 @@
                     const msg = JSON.parse(event.data);
                     
                     if (msg.event === "speech_start") {
+                        // Detener TTS cuando el usuario habla
+                        if ('speechSynthesis' in window) {
+                            window.speechSynthesis.cancel();
+                        }
+
                         log("Hablando...", "speaking");
                         
                         if (postRollTimer) {
-                            // --- INICIO DE LA CORRECCIÓN ---
-                            // Si estábamos en post-roll, cancelar el envío
+                            // Si estábamos en post-roll (pausa corta), cancelar el envío
                             clearTimeout(postRollTimer);
                             postRollTimer = null;
                             
-                            // Y AÑADIR el audio del pre-roll (el silencio/pausa)
+                            // Y AÑADIR el audio del pre-roll (la pausa)
                             // al buffer de voz existente para unir las frases.
                             const newBuffer = new Float32Array(speechBuffer.length + preRollBuffer.length);
                             newBuffer.set(speechBuffer);
                             newBuffer.set(preRollBuffer, speechBuffer.length);
                             speechBuffer = newBuffer;
-                            // --- FIN DE LA CORRECCIÓN ---
 
                         } else if (!isRecording) {
-                            // Si es un inicio de voz nuevo, solo usamos el pre-roll.
+                            // Si es un inicio de voz nuevo, volcamos el pre-roll
                             speechBuffer = new Float32Array(preRollBuffer);
                         }
                         
@@ -585,8 +701,10 @@
                         
                         if (isRecording) {
                             isRecording = false;
+                            // Iniciar temporizador de post-roll.
+                            // Esperar X segundos antes de enviar.
                             postRollTimer = setTimeout(() => {
-                                sendToWhisper();
+                                sendToWhisper(); // Enviar el audio acumulado
                                 postRollTimer = null;
                             }, POST_ROLL_TIME * 1000);
                         }
@@ -639,13 +757,14 @@
                 // 6. Obtener micrófono y conectar el grafo de audio
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
+                // Comprobación de condición de carrera
                 if (!audioContext) {
                     throw new Error("El contexto de audio se cerró debido a un error de conexión.");
                 }
 
                 mediaStreamSource = audioContext.createMediaStreamSource(stream);
                 mediaStreamSource.connect(workletNode);
-                workletNode.connect(audioContext.destination);
+                workletNode.connect(audioContext.destination); // Conectar al destino para que siga procesando
 
                 log("Micrófono activo. Escuchando...", "idle");
 
@@ -658,7 +777,7 @@
 
         stopBtn.addEventListener('click', stopDetection);
 
-        // --- AÑADIDO: Event listener para el botón de limpiar ---
+        // Event listener para el botón de limpiar
         clearBtn.addEventListener('click', () => {
             chatContainer.innerHTML = '';
         });
