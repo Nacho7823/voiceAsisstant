@@ -1,0 +1,93 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 2em;
+    background-color: #f9f9f9;
+    display: flex;
+    justify-content: center;
+}
+main {
+    width: 100%;
+    max-width: 600px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    padding: 2em;
+}
+h1 {
+    color: #333;
+    text-align: center;
+}
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5em;
+}
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+label {
+    font-weight: 600;
+    color: #555;
+}
+input[type="file"], select, button {
+    font-size: 1rem;
+    padding: 0.8em;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+button {
+    background-color: #007aff;
+    color: white;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+button:hover {
+    background-color: #0056b3;
+}
+button:disabled {
+    background-color: #cce4ff;
+    cursor: not-allowed;
+}
+#result-container {
+    margin-top: 2em;
+}
+#status {
+    font-style: italic;
+    color: #666;
+    text-align: center;
+}
+pre {
+    background: #f4f4f4;
+    padding: 1em;
+    border-radius: 6px;
+    border: 1px solid #eee;
+    white-space: pre-wrap; /* Para que el texto no se salga */
+    word-wrap: break-word;
+    font-size: 0.95em;
+    line-height: 1.6;
+}
+
+.record-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+}
+.record-controls button {
+    padding: 0.5em 0.8em;
+    font-weight: 600;
+}
+#record-timer {
+    color: #444;
+    font-size: 0.95em;
+    margin-left: 0.5em;
+}
+.model-info {
+    margin-top: 0.5em;
+    color: #666;
+    font-size: 0.9em;
+}

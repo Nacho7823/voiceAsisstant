@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traducción Continua (Silero VAD + Whisper)</title>
+    <!-- 
+      Paso 1: Importar la biblioteca 'silero-vad-web'.
+      Esta biblioteca está diseñada para correr el modelo VAD de Silero
+      directamente en el navegador usando WebAssembly (muy rápido).
+    -->
+    <script src="https://cdn.jsdelivr.net/npm/silero-vad-web@0.1.0/dist/silero-vad-web.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 2em;
+            background-color: #f9f9f9;
+            display: flex;
+            justify-content: center;
+        }
+        main {
+            width: 100%;
+            max-width: 800px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            padding: 2em;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 1em;
+        }
+        section {
+            margin-bottom: 2em;
+            padding-bottom: 2em;
+            border-bottom: 1px solid #eee;
+        }
+        section:last-of-type {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        h2 {
+            color: #444;
+            border-bottom: 1px solid #f0f0f0;
+            padding-bottom: 0.5em;
+            margin-bottom: 1.5em;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+            margin-bottom: 1em;
+        }
+        label {
+            font-weight: 600;
+            color: #555;
+        }
+        input[type="file"], select, button {
+            font-size: 1rem;
+            padding: 0.8em;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+        button {
+            background-color: #007aff;
+            color: white;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            padding: 0.8em 1.5em;
+            margin-top: 1em;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #cce4ff;
+            cursor: not-allowed;
+        }
+        #translation-output, #continuous-output {
+            background: #f4f4f4;
+            padding: 1em;
+            border-radius: 6px;
+            border: 1px solid #eee;
+            min-height: 50px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 0.95em;
+            line-height: 1.6;
+        }
+        #continuous-status {
+            font-style: italic;
+            color: #666;
+            margin-bottom: 1em;
+            text-align: center;
+        }
+        .controls {
+            display: flex;
+            gap: 1em;
+            align-items: center;
+            margin-bottom: 1em;
+        }
+        .recording-indicator {
+            width: 20px;
+            height: 20px;
+            background-color: grey;
+            border-radius: 50%;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 10px;
+            animation: none;
+        }
+        .recording-indicator.active {
+            background-color: red;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.7; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <main>
+        <h1>Traducción de Audio (Whisper + VAD)</h1>
+        
+        <!-- Sección 1: Carga de Archivos (sin cambios) -->
+        <section>
+            <h2>1. Traducción de Archivo Único</h2>
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="model-select-single">Elige el modelo Whisper:</label>
+                    <select id="model-select-single" name="model_size">
+                        <option value="tiny">Tiny</option>
+                        <option value="base" selected>Base</option>
+                        <option value="small">Small</option>
+                        <option value="medium">Medium</option>
+                        <option value="large-v3">Large-v3</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="file-input">Sube tu archivo de audio (mp3, wav, m4a...):</label>
+                    <input id="file-input" type="file" name="audio_file" accept="audio/*" required>
+                </div>
+                <button id="submit-button-single" type="submit">Traducir Archivo</button>
+            </form>
+            <div id="result-container-single" style="margin-top: 2em;">
+                <div id="status-single" style="font-style: italic; color: #666; text-align: center;">Esperando archivo...</div>
+                <pre id="translation-output"></pre>
+            </div>
+        </section>
+
+        <!-- Sección 2: Traducción Continua (con Silero VAD) -->
+        <section>
+            <h2>2. Traducción Continua (Micrófono + Silero VAD)</h2>
+            <p>
+                Usando el modelo VAD de Silero (de Hugging Face) para detectar voz en tiempo real.
+                Solo se enviará audio a Whisper cuando dejes de hablar.
+            </p>
+            
+            <div class="form-group">
+                <label for="model-select-continuous">Elige el modelo Whisper:</label>
+                <select id="model-select-continuous" name="model_size_continuous">
+                    <option value="tiny">Tiny</option>
+                    <option value="base" selected>Base</option>
+                    <option value="small">Small</option>
+                    <option value="medium">Medium</option>
+                    <option value="large-v3">Large-v3</option>
+                </select>
+            </div>
+
+            <div class="controls">
+                <button id="start-continuous-button">Iniciar Traducción Continua</button>
+                <button id="stop-continuous-button" disabled>Detener Traducción</button>
+                <span class="recording-indicator" id="recording-indicator"></span>
+            </div>
+
+            <div id="continuous-status"></div>
+            <pre id="continuous-output"></pre>
+        </section>
+
+    </main>
+
+    <script type="module">
+        // --- Configuración Global ---
+        const WHISPER_API_URL = 'http://127.0.0.1:8000/translate';
+        const SAMPLE_RATE = 16000; // Silero VAD y Whisper esperan 16kHz
+
+        // --- Elementos del DOM ---
+        const uploadForm = document.getElementById('upload-form');
+        const submitButtonSingle = document.getElementById('submit-button-single');
+        const statusDivSingle = document.getElementById('status-single');
+        const translationOutput = document.getElementById('translation-output');
+
+        const startContinuousButton = document.getElementById('start-continuous-button');
+        const stopContinuousButton = document.getElementById('stop-continuous-button');
+        const continuousStatusDiv = document.getElementById('continuous-status');
+        const continuousOutput = document.getElementById('continuous-output');
+        const modelSelectContinuous = document.getElementById('model-select-continuous');
+        const recordingIndicator = document.getElementById('recording-indicator');
+
+        // --- Variables para Traducción Continua ---
+        let vadInstance = null; // La instancia del VAD de Silero
+        let isRecording = false;
+        let currentSpeechBuffer = []; // Almacena chunks (Float32Array) mientras se habla
+
+        // --- 1. Funcionalidad de Traducción de Archivo Único ---
+        uploadForm.addEventListener('submit', async (event) => {
+            event.preventDefault(); 
+            submitButtonSingle.disabled = true;
+            statusDivSingle.textContent = 'Traduciendo...';
+            translationOutput.textContent = '';
+            const formData = new FormData(uploadForm);
+            
+            try {
+                const response = await fetch(WHISPER_API_URL, { method: 'POST', body: formData });
+                const data = await response.json();
+                if (response.ok) {
+                    statusDivSingle.textContent = `Traducción completada (Idioma: ${data.detected_language})`;
+                    translationOutput.textContent = data.translation;
+                } else {
+                    statusDivSingle.textContent = 'Error de la API:';
+                    translationOutput.textContent = data.detail || 'Ocurrió un error desconocido';
+                }
+            } catch (error) {
+                console.error('Error de conexión:', error);
+                statusDivSingle.textContent = 'Error de conexión:';
+                translationOutput.textContent = 'No se pudo conectar a la API. ¿Está corriendo y con CORS?';
+            } finally {
+                submitButtonSingle.disabled = false;
+            }
+        });
+
+        // --- 2. Funcionalidad de Traducción Continua (con Silero VAD) ---
+
+        // Iniciar la grabación continua
+        startContinuousButton.addEventListener('click', async () => {
+            if (isRecording) return;
+            isRecording = true;
+            startContinuousButton.disabled = true;
+            continuousStatusDiv.textContent = 'Cargando modelo VAD... (la primera vez puede tardar)';
+
+            try {
+                // Crear la instancia de VAD. Esto carga el modelo y pide permiso al micrófono.
+                // FIX: Usar 'window.silero' para acceder a la biblioteca cargada globalmente.
+                vadInstance = await window.silero.VAD.create({
+                    // Opciones para el VAD.
+                    // 'onSpeechStart': Se llama cuando el modelo detecta el inicio de la voz.
+                    onSpeechStart: () => {
+                        console.log("VAD: Inicio de voz detectado.");
+                        recordingIndicator.classList.add('active');
+                        continuousStatusDiv.textContent = 'Hablando...';
+                        currentSpeechBuffer = []; // Limpiar buffer para la nueva frase
+                    },
+                    
+                    // 'onSpeechEnd': Se llama cuando el modelo detecta el fin de la voz.
+                    onSpeechEnd: () => {
+                        console.log("VAD: Fin de voz detectado.");
+                        recordingIndicator.classList.remove('active');
+                        continuousStatusDiv.textContent = 'Fin de frase, enviando a Whisper...';
+
+                        if (currentSpeechBuffer.length === 0) {
+                            console.log("Buffer vacío, no se envía.");
+                            return;
+                        }
+
+                        // Combinar todos los chunks de audio en uno solo
+                        const totalSamples = currentSpeechBuffer.reduce((acc, val) => acc + val.length, 0);
+                        const combinedAudio = new Float32Array(totalSamples);
+                        let offset = 0;
+                        for (const chunk of currentSpeechBuffer) {
+                            combinedAudio.set(chunk, offset);
+                            offset += chunk.length;
+                        }
+
+                        // Limpiar el buffer
+                        currentSpeechBuffer = [];
+                        
+                        // Crear el Blob WAV y enviarlo
+                        const wavBlob = createWavBlob(combinedAudio, SAMPLE_RATE);
+                        sendAudioToWhisper(wavBlob);
+                    },
+                    
+                    // 'onData': Se llama con cada chunk de audio que *contiene voz*.
+                    onData: (audioChunk) => {
+                        // Almacenamos el chunk de audio (Float32Array)
+                        currentSpeechBuffer.push(audioChunk);
+                    }
+                });
+
+                // Iniciar el VAD
+                vadInstance.start();
+                stopContinuousButton.disabled = false;
+                continuousStatusDiv.textContent = 'Escuchando... (habla para traducir)';
+
+            } catch (error) {
+                console.error('Error al iniciar VAD:', error);
+                continuousStatusDiv.textContent = `Error al iniciar VAD: ${error.message}`;
+                isRecording = false;
+                startContinuousButton.disabled = false;
+            }
+        });
+
+        // Detener la grabación continua
+        stopContinuousButton.addEventListener('click', () => {
+            if (!isRecording || !vadInstance) return;
+
+            vadInstance.stop(); // Detener el VAD
+            vadInstance = null;
+            
+            isRecording = false;
+            startContinuousButton.disabled = false;
+            stopContinuousButton.disabled = true;
+            recordingIndicator.classList.remove('active');
+            continuousStatusDiv.textContent = 'Traducción detenida.';
+            currentSpeechBuffer = []; // Limpiar buffer
+        });
+
+        // Función para enviar el Blob de audio a la API de Whisper
+        async function sendAudioToWhisper(audioBlob) {
+            if (!audioBlob || audioBlob.size === 0) {
+                console.log("Blob vacío, no se envía a Whisper.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('audio_file', audioBlob, 'segment.wav');
+            formData.append('model_size', modelSelectContinuous.value);
+
+            try {
+                console.log(`Enviando ${audioBlob.size} bytes a Whisper...`);
+                const response = await fetch(WHISPER_API_URL, {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                const data = await response.json();
+
+                if (response.ok) {
+                    continuousStatusDiv.textContent = 'Escuchando...';
+                    continuousOutput.textContent += data.translation + '\n';
+                    continuousOutput.scrollTop = continuousOutput.scrollHeight; // Scroll automático
+                } else {
+                    continuousStatusDiv.textContent = `Error de Whisper: ${data.detail || 'Desconocido'}`;
+                    console.error('Error de Whisper:', data);
+                }
+            } catch (error) {
+                continuousStatusDiv.textContent = `Error de conexión con Whisper: ${error.message}`;
+                console.error('Error de conexión con Whisper:', error);
+            }
+        }
+
+        // --- Utilidad para crear un Blob WAV a partir de Float32Array ---
+        // (Necesario para enviar a la API)
+        function createWavBlob(audioData, sampleRate) {
+            const buffer = new ArrayBuffer(44 + audioData.length * 2);
+            const view = new DataView(buffer);
+
+            /* RIFF identifier */
+            writeString(view, 0, 'RIFF');
+            /* file length */
+            view.setUint32(4, 36 + audioData.length * 2, true);
+            /* RIFF type */
+            writeString(view, 8, 'WAVE');
+            /* format chunk identifier */
+            writeString(view, 12, 'fmt ');
+            /* format chunk length */
+            view.setUint32(16, 16, true);
+            /* sample format (1 == PCM) */
+            view.setUint16(20, 1, true);
+            /* channel count */
+            view.setUint16(22, 1, true);
+            /* sample rate */
+            view.setUint32(24, sampleRate, true);
+            /* byte rate (sample rate * block align) */
+            view.setUint32(28, sampleRate * 2 * 1, true); // sampleRate * bytesPerSample * numChannels
+            /* block align (channel count * bytes per sample) */
+            view.setUint16(32, 2 * 1, true); // bytesPerSample * numChannels
+            /* bits per sample */
+            view.setUint16(34, 16, true);
+            /* data chunk identifier */
+            writeString(view, 36, 'data');
+            /* data chunk length */
+            view.setUint32(40, audioData.length * 2, true);
+
+            // Escribir las muestras PCM
+            let offset = 44;
+            for (let i = 0; i < audioData.length; i++, offset += 2) {
+                const s = Math.max(-1, Math.min(1, audioData[i]));
+                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Blob([view], { type: 'audio/wav' });
+        }
+
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+torch
+silero-vad
+numpy
+fastapi-cors
+websockets

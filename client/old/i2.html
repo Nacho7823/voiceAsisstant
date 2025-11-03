@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-M">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cliente Whisper API</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <main>
+        <h1>Traductor de Audio (Whisper)</h1>
+        
+        <form id="upload-form" enctype="multipart/form-data">
+            
+            <div class="form-group">
+                <label for="model-select">1. Elige el modelo:</label>
+                <select id="model-select" name="model_size">
+                    <option value="tiny">Tiny (muy rápido, baja precisión)</option>
+                    <option value="base" selected>Base (rápido, OK precisión)</option>
+                    <option value="small">Small (balanceado)</option>
+                    <option value="medium">Medium (lento, buena precisión)</option>
+                    <option value="large-v3">Large-v3 (muy lento, alta precisión)</option>
+                </select>
+                <div id="model-info" class="model-info">Tamaño aproximado: —</div>
+            </div>
+
+            <div class="form-group">
+                <label for="language-select">Idioma de destino (opcional):</label>
+                <select id="language-select" name="target_language">
+                    <option value="auto" selected>Detectar automáticamente</option>
+                    <option value="es">Español</option>
+                    <option value="en">Inglés</option>
+                    <option value="fr">Francés</option>
+                    <option value="de">Alemán</option>
+                    <option value="pt">Portugués</option>
+                    <option value="it">Italiano</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label>Grabar desde micrófono:</label>
+                <div class="record-controls">
+                    <button type="button" id="record-button">Grabar</button>
+                    <button type="button" id="stop-button" disabled>Detener</button>
+                    <button type="button" id="play-button" disabled>Reproducir</button>
+                    <span id="record-timer" aria-live="polite"></span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="file-input">2. Sube tu archivo de audio (mp3, wav, m4a...):</label>
+                <input id="file-input" type="file" name="audio_file" accept="audio/*" required>
+            </div>
+            
+            <button id="submit-button" type="submit">Traducir Audio</button>
+        </form>
+
+        <div id="result-container">
+            <div id="status">Esperando archivo...</div>
+            <pre id="result-text"></pre>
+        </div>
+    </main>
+
+    <script src="index.js" defer></script>
+</body>
+</html>

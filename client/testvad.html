@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Servidor VAD (Limpio)</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 90vh;
+            background: #f4f7f6;
+            color: #333;
+        }
+        main {
+            background: #ffffff;
+            padding: 2em 3em;
+            border-radius: 12px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.07);
+            text-align: center;
+            width: 90%;
+            max-width: 450px;
+        }
+        h2 {
+            margin-top: 0;
+        }
+        button {
+            font-size: 1.1rem;
+            font-weight: 600;
+            padding: 0.8em 1.5em;
+            margin: 0.5em;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.2s;
+        }
+        #start-btn {
+            background-color: #007aff;
+            color: white;
+        }
+        #start-btn:disabled {
+            background-color: #cce4ff;
+            cursor: not-allowed;
+        }
+        #stop-btn {
+            background-color: #e5e5e5;
+            color: #333;
+        }
+        #stop-btn:disabled {
+            background-color: #f5f5f5;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        #status-light {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #dcdcdc;
+            margin: 1.5em auto;
+            border: 4px solid #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1) inset;
+            transition: background-color 0.2s;
+        }
+        #status-light.speaking {
+            background: #34c759; /* Verde brillante */
+        }
+        #log {
+            font-family: monospace;
+            font-size: 0.9em;
+            color: #555;
+            margin-top: 1.5em;
+            padding: 0.8em;
+            background: #f9f9f9;
+            border-radius: 6px;
+            min-height: 1.2em;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <h2>Test de Servidor VAD</h2>
+        <button id="start-btn">Iniciar Detección</button>
+        <button id="stop-btn" disabled>Detener</button>
+        
+        <div id="status-light" title="Gris: Inactivo. Verde: Hablando."></div>
+        
+        <div id="log">Haz clic en Iniciar...</div>
+    </main>
+
+    <script type="module">
+        // --- Elementos del DOM ---
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const statusLight = document.getElementById('status-light');
+        const logDiv = document.getElementById('log');
+
+        // --- Configuración ---
+        const VAD_API_URL = "ws://127.0.0.1:8001/ws/vad";
+        const SAMPLE_RATE = 16000;
+
+        // --- Estado Global ---
+        let socket = null;
+        let audioContext = null;
+        let workletNode = null;
+        let mediaStreamSource = null;
+
+        // --- Código del AudioWorklet ---
+        // Se define aquí para ser usado más tarde
+        const workletCode = `
+            class VADAudioProcessor extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                }
+
+                /**
+                 * 'process' es llamado por el navegador en un hilo de audio de alta prioridad.
+                 * 'inputs' contiene el audio del micrófono.
+                 */
+                process(inputs, outputs, parameters) {
+                    // inputs[0] es la primera entrada, [0] es el primer canal.
+                    const inputChannel = inputs[0][0];
+                    
+                    if (inputChannel) {
+                        // Enviamos el buffer de audio (un Float32Array) al hilo principal.
+                        // Usamos 'transfer' ([inputChannel.buffer]) para mover la memoria
+                        // sin copiarla, lo cual es mucho más eficiente.
+                        this.port.postMessage(inputChannel.buffer, [inputChannel.buffer]);
+                    }
+
+                    // Devuelve 'true' para mantener vivo el procesador.
+                    return true;
+                }
+            }
+            registerProcessor('vad-audio-processor', VADAudioProcessor);
+        `;
+
+        // --- Funciones ---
+
+        function log(message) {
+            console.log(message);
+            logDiv.textContent = message;
+        }
+
+        /**
+         * Función de limpieza. Cierra todas las conexiones y resetea el estado.
+         */
+        function stopDetection() {
+            log("Detección detenida.");
+
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            if (workletNode) {
+                // Limpiar el listener y desconectar el nodo
+                workletNode.port.onmessage = null;
+                workletNode.disconnect();
+                workletNode = null;
+            }
+            if (mediaStreamSource) {
+                mediaStreamSource.disconnect();
+                // Detener las pistas del micrófono (apaga el ícono de "grabando")
+                mediaStreamSource.mediaStream.getTracks().forEach(track => track.stop());
+                mediaStreamSource = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            statusLight.classList.remove('speaking');
+            stopBtn.disabled = true;
+            startBtn.disabled = false;
+        }
+
+        /**
+         * Función principal de inicio.
+         */
+        startBtn.addEventListener('click', async () => {
+            log("Iniciando...");
+            startBtn.disabled = true;
+
+            try {
+                // 1. Crear el AudioContext
+                // (El navegador lo inicia en estado 'suspended' por seguridad)
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: SAMPLE_RATE
+                });
+                
+                // 2. [CORRECCIÓN 1] Reanudar el AudioContext
+                // Debemos "despertarlo" con un gesto del usuario (este clic).
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // 3. [CORRECCIÓN 2] Crear la 'data:' URL para el Worklet
+                // Esto evita el error de seguridad 'blob:null' al correr desde 'file://'
+                const workletURL = 'data:application/javascript,' + encodeURIComponent(workletCode);
+
+                // 4. Cargar el módulo del Worklet
+                log("Cargando módulo de audio...");
+                await audioContext.audioWorklet.addModule(workletURL);
+                log("Módulo de audio cargado.");
+
+                // 5. Crear el Nodo del Worklet
+                workletNode = new AudioWorkletNode(audioContext, 'vad-audio-processor');
+
+                // 6. Conectar al WebSocket
+                log("Conectando al servidor VAD...");
+                socket = new WebSocket(VAD_API_URL);
+
+                // 6a. Manejar errores de conexión (importante para la condición de carrera)
+                socket.onerror = (err) => {
+                    log("Error de WebSocket. ¿El servidor VAD está corriendo?");
+                    console.error(err);
+                    stopDetection(); // Limpiar todo si falla la conexión
+                };
+                
+                socket.onclose = () => {
+                    log("Desconectado del servidor VAD.");
+                    // No llamamos a stopDetection() aquí porque puede haber sido
+                    // llamado por el usuario. El estado ya estará limpio.
+                    if (startBtn.disabled) { // Solo si no fue un stop manual
+                        stopDetection();
+                    }
+                };
+
+                // 6b. Manejar mensajes del VAD
+                socket.onmessage = (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.event === "speech_start") {
+                        log("Evento: INICIO de voz (recibido del servidor)");
+                        statusLight.classList.add('speaking');
+                    } else if (msg.event === "speech_end") {
+                        log("Evento: FIN de voz (recibido del servidor)");
+                        statusLight.classList.remove('speaking');
+                    } else if (msg.error) {
+                        log(`Error del servidor: ${msg.error}`);
+                    }
+                };
+                
+                // 6c. Esperar a que el WebSocket esté abierto
+                await new Promise((resolve, reject) => {
+                    socket.onopen = resolve;
+                    // El 'onerror' de arriba manejará el 'reject'
+                });
+
+                log("Conectado. Solicitando micrófono...");
+
+                // 7. Obtener acceso al Micrófono
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                // 8. [CORRECCIÓN 3] Manejar la Condición de Carrera
+                // Comprobar si el 'audioContext' sigue existiendo.
+                // Si 'socket.onerror' se disparó mientras esperábamos 'getUserMedia',
+                // 'audioContext' será 'null' y debemos abortar.
+                if (!audioContext) {
+                    throw new Error("El contexto de audio se cerró debido a un error de conexión.");
+                }
+
+                // 9. Conectar el Grafo de Audio
+                // Micrófono -> Worklet
+                mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                mediaStreamSource.connect(workletNode);
+                
+                // Worklet -> Destino (Altavoz, aunque mudo)
+                // Esta conexión es necesaria o Chrome a veces pausa el Worklet.
+                workletNode.connect(audioContext.destination);
+
+                // 10. Conectar el Worklet al WebSocket
+                // (Escuchar audio desde el hilo del worklet y enviarlo al socket)
+                workletNode.port.onmessage = (event) => {
+                    // 'event.data' es el ArrayBuffer (Float32Array.buffer)
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(event.data);
+                    }
+                };
+
+                log("Micrófono y VAD activos. Habla ahora.");
+                stopBtn.disabled = false;
+
+            } catch (error) {
+                // Capturar cualquier error durante el inicio
+                log(`Error: ${error.message}`);
+                console.error(error);
+                stopDetection(); // Limpiar todo si algo salió mal
+            }
+        });
+
+        stopBtn.addEventListener('click', stopDetection);
+
+    </script>
+</body>
+</html>
