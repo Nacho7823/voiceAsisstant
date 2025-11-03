@@ -85,7 +85,9 @@ async def translate_audio(
         # 2. Guardar el archivo de audio
         if SAVE_AUDIOS:
             os.makedirs(AUDIOS_DIR, exist_ok=True)
-            safe_name = os.path.basename(audio_file.filename) or "upload.wav"
+            name = "audio" + str(int(os.times().system * 1000))
+            name += "_" + (audio_file.filename or "upload.wav")
+            safe_name = os.path.basename(name)
             dst_path = os.path.join(AUDIOS_DIR, safe_name)
             try:
                 print(f"[audio] Guardando audio en: {dst_path}")

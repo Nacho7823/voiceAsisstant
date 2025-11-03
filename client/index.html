@@ -72,6 +72,15 @@
         #stop-btn:hover { background-color: #e74c3c; }
         #stop-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
         
+        /* --- NUEVO ESTILO PARA EL BOTÓN LIMPIAR --- */
+        #clear-btn {
+            background-color: #7f8c8d; /* Gris */
+            color: white;
+            font-size: 0.9rem;
+            padding: 0.5em 1em;
+        }
+        #clear-btn:hover { background-color: #95a5a6; }
+
         .selectors {
             display: flex;
             gap: 1em;
@@ -125,29 +134,46 @@
             color: #34495e;
             font-weight: 500;
         }
-        #output-container, #llm-output-container {
+        
+        /* --- ESTILOS DE CHAT MODIFICADOS --- */
+        #chat-container {
             background: #f9f9f9;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
-            min-height: 100px;
-            max-height: 250px;
+            min-height: 200px;
+            max-height: 400px;
             overflow-y: auto;
             padding: 1.5em;
-            color: #2c3e50;
+            display: flex;
+            flex-direction: column;
+            gap: 1em;
+        }
+        .chat-bubble {
+            padding: 0.8em 1.2em;
+            border-radius: 18px;
             line-height: 1.6;
+            max-width: 75%;
         }
-        #llm-output-container {
-            background: #f0f4f8; /* Color diferente para LLM */
+        .chat-bubble.user {
+            background-color: #2980b9;
+            color: white;
+            border-bottom-right-radius: 4px;
+            align-self: flex-end;
         }
-        #output-container p, #llm-output-container p {
-            margin: 0 0 0.8em 0;
-            padding-bottom: 0.8em;
-            border-bottom: 1px solid #eee;
+        .chat-bubble.assistant {
+            background-color: #ecf0f1;
+            color: #2c3e50;
+            border-bottom-left-radius: 4px;
+            align-self: flex-start;
         }
-        #output-container p:last-child, #llm-output-container p:last-child {
-            margin-bottom: 0;
-            border-bottom: none;
+        .chat-bubble.error {
+            background-color: #e74c3c;
+            color: white;
+            border-bottom-left-radius: 4px;
+            align-self: flex-start;
         }
+        /* --- FIN DE ESTILOS DE CHAT --- */
+
         @keyframes pulse {
             0% { box-shadow: 0 0 0 0 rgba(39, 174, 96, 0.7); }
             70% { box-shadow: 0 0 0 10px rgba(39, 174, 96, 0); }
@@ -219,12 +245,16 @@
             <div class="vad-light" id="vad-light"></div>
             <div id="status-log">Haz clic en "Iniciar" para comenzar</div>
         </div>
-
-        <h2>Transcripción (Whisper)</h2>
-        <div id="output-container"></div>
         
-        <h2>Respuesta (LLM)</h2>
-        <div id="llm-output-container"></div>
+        <!-- CONTENEDOR DE CHAT MODIFICADO -->
+        <!-- H2 MODIFICADO PARA INCLUIR EL BOTÓN -->
+        <h2 style="display: flex; justify-content: space-between; align-items: center;">
+            Conversación
+            <button id="clear-btn">Limpiar</button>
+        </h2>
+        <div id="chat-container"></div>
+        <!-- FIN DE CONTENEDOR MODIFICADO -->
+
     </main>
 
     <script type="module">
@@ -233,16 +263,17 @@
         const stopBtn = document.getElementById('stop-btn');
         const statusLog = document.getElementById('status-log');
         const vadLight = document.getElementById('vad-light');
-        const outputDiv = document.getElementById('output-container');
         const modelSelect = document.getElementById('model-select');
         const languageSelect = document.getElementById('language-select');
-        // Nuevos elementos
+        // Referencias de LLM
         const llmApiUrl = document.getElementById('llm-api-url');
         const llmPrompt = document.getElementById('llm-prompt');
-        const llmOutputDiv = document.getElementById('llm-output-container');
-        // Nuevos elementos para OpenAI
         const llmApiKey = document.getElementById('llm-api-key');
         const llmModelName = document.getElementById('llm-model-name');
+        
+        // --- NUEVA REFERENCIA DE CHAT ---
+        const chatContainer = document.getElementById('chat-container');
+        const clearBtn = document.getElementById('clear-btn'); // <-- AÑADIDO
 
 
         // --- Configuración de APIs y Audio ---
@@ -250,8 +281,8 @@
         const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
         
         const SAMPLE_RATE = 16000;
-        const PRE_ROLL_TIME = 2; 
-        const POST_ROLL_TIME = 1;
+        const PRE_ROLL_TIME = 1; 
+        const POST_ROLL_TIME = 2;
 
         const PRE_ROLL_SAMPLES = SAMPLE_RATE * PRE_ROLL_TIME;
         
@@ -284,6 +315,21 @@
         }
 
         /**
+         * NUEVA FUNCIÓN: Añade un mensaje al contenedor de chat.
+         * @param {string} role - 'user', 'assistant', o 'error'
+         * @param {string} text - El contenido del mensaje
+         */
+        function addMessageToChat(role, text) {
+            const bubble = document.createElement('div');
+            bubble.classList.add('chat-bubble', role);
+            bubble.textContent = text;
+            chatContainer.appendChild(bubble);
+            // Hacer scroll automático al final
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+
+        /**
          * Maneja los datos de audio entrantes desde el AudioWorklet.
          */
         function handleAudioData(audioData) {
@@ -306,7 +352,7 @@
         }
         
         /**
-         * FUNCIÓN MODIFICADA: Envía el texto a una API tipo OpenAI.
+         * Envía el texto a una API tipo OpenAI.
          * @param {string} textFromWhisper - El texto devuelto por Whisper.
          */
         async function sendToLLM(textFromWhisper) {
@@ -315,7 +361,6 @@
             const modelName = llmModelName.value.trim();
             const userPrompt = llmPrompt.value.trim();
             
-            // Si no hay URL, API Key o Modelo, no hacemos nada.
             if (!apiUrl || !apiKey || !modelName) {
                 log("Escuchando... (Falta URL, API Key o Modelo de LLM)", "idle");
                 return; 
@@ -323,13 +368,11 @@
 
             log("Enviando a LLM...", "processing");
 
-            // Construir el prompt final
             let fullPrompt = textFromWhisper;
             if (userPrompt) {
                 fullPrompt = `${userPrompt}\n\n"${textFromWhisper}"`;
             }
 
-            // Payload en formato OpenAI
             const payload = {
                 "model": modelName,
                 "messages": [
@@ -337,7 +380,6 @@
                 ]
             };
 
-            // Encabezados con Autorización
             const headers = {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
@@ -353,26 +395,24 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    // Si la API devuelve un error (ej: 401, 404, 500), 'data' puede contener el mensaje
                     let errorMsg = data.error?.message || `Error HTTP: ${response.status}`;
                     throw new Error(errorMsg);
                 }
 
-                // Parsear respuesta formato OpenAI
                 const llmText = data.choices[0].message.content;
                 
                 if (llmText && llmText.trim()) {
-                    llmOutputDiv.innerHTML += `<p>${llmText.trim()}</p>`;
-                    llmOutputDiv.scrollTop = llmOutputDiv.scrollHeight;
+                    // MODIFICADO: Añadir burbuja de asistente
+                    addMessageToChat('assistant', llmText.trim());
                 }
 
-                log("Escuchando...", "idle"); // Volver a escuchar después de la respuesta del LLM
+                log("Escuchando...", "idle"); 
 
             } catch (error) {
                 console.error('Error al enviar a LLM:', error);
                 log(`Error de LLM: ${error.message}`, "error");
-                llmOutputDiv.innerHTML += `<p style="color:red;"><strong>Error de LLM:</strong> ${error.message}</p>`;
-                llmOutputDiv.scrollTop = llmOutputDiv.scrollHeight;
+                // MODIFICADO: Añadir burbuja de error
+                addMessageToChat('error', `Error de LLM: ${error.message}`);
             }
         }
 
@@ -413,11 +453,10 @@
                 if (typeof translationText === 'string') {
                     const trimmedText = translationText.trim();
                     if (trimmedText) {
-                        // 1. Mostrar la transcripción de Whisper
-                        outputDiv.innerHTML += `<p>${trimmedText}</p>`;
-                        outputDiv.scrollTop = outputDiv.scrollHeight;
+                        // MODIFICADO: Añadir burbuja de usuario
+                        addMessageToChat('user', trimmedText);
                         
-                        // 2. Enviar el texto al LLM
+                        // Enviar el texto al LLM
                         await sendToLLM(trimmedText);
                         
                     } else {
@@ -431,6 +470,8 @@
             } catch (error) {
                 console.error('Error al enviar a Whisper:', error);
                 log(`Error de Whisper: ${error.message}`, "error");
+                // MODIFICADO: Añadir burbuja de error
+                addMessageToChat('error', `Error de Whisper: ${error.message}`);
             }
         }
 
@@ -474,7 +515,7 @@
             llmApiUrl.disabled = false;
             llmPrompt.disabled = false;
             llmApiKey.disabled = false;
-    llmModelName.disabled = false;
+            llmModelName.disabled = false;
         }
 
         // --- Event Listener del Botón de Inicio ---
@@ -517,13 +558,27 @@
                         log("Hablando...", "speaking");
                         
                         if (postRollTimer) {
+                            // --- INICIO DE LA CORRECCIÓN ---
+                            // Si estábamos en post-roll, cancelar el envío
                             clearTimeout(postRollTimer);
                             postRollTimer = null;
-                        }
-                        if (!isRecording) {
+                            
+                            // Y AÑADIR el audio del pre-roll (el silencio/pausa)
+                            // al buffer de voz existente para unir las frases.
+                            const newBuffer = new Float32Array(speechBuffer.length + preRollBuffer.length);
+                            newBuffer.set(speechBuffer);
+                            newBuffer.set(preRollBuffer, speechBuffer.length);
+                            speechBuffer = newBuffer;
+                            // --- FIN DE LA CORRECCIÓN ---
+
+                        } else if (!isRecording) {
+                            // Si es un inicio de voz nuevo, solo usamos el pre-roll.
                             speechBuffer = new Float32Array(preRollBuffer);
                         }
-                        isRecording = true;
+                        
+                        // En ambos casos, el pre-roll ha sido "consumido"
+                        preRollBuffer = new Float32Array(0);
+                        isRecording = true; // Empezar a grabar activamente
 
                     } else if (msg.event === "speech_end") {
                         log("Fin de voz detectado...", "processing");
@@ -602,6 +657,11 @@
         });
 
         stopBtn.addEventListener('click', stopDetection);
+
+        // --- AÑADIDO: Event listener para el botón de limpiar ---
+        clearBtn.addEventListener('click', () => {
+            chatContainer.innerHTML = '';
+        });
 
 
         // --- Funciones de Utilidad (Crear WAV) ---
