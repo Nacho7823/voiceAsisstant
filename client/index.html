@@ -319,6 +319,9 @@
         let speechBuffer = new Float32Array(0);
         let isRecording = false;
         let postRollTimer = null;
+        
+        // --- NUEVA VARIABLE DE ESTADO ---
+        let isTTSPlaying = false; // Flag para saber si el TTS está hablando
 
         /**
          * Actualiza el log de estado y el estilo de la luz VAD.
@@ -367,7 +370,32 @@
 
             const utterance = new SpeechSynthesisUtterance(text);
             
-            // --- INICIO DE LA CORRECCIÓN ---
+            // --- LÓGICA DE CONTROL DE ESTADO TTS ---
+            utterance.onstart = () => {
+                isTTSPlaying = true;
+                log("Asistente hablando...", "idle"); // Mostrar estado
+                vadLight.classList.remove('speaking'); // Apagar luz VAD
+                console.log("TTS started, pausing microphone processing.");
+            };
+
+            utterance.onend = () => {
+                isTTSPlaying = false;
+                console.log("TTS finished, resuming microphone processing.");
+                // Solo volver a "Escuchando..." si la detección está activa (botón de stop habilitado)
+                if (stopBtn.disabled === false) {
+                    log("Escuchando...", "idle");
+                }
+            };
+
+            utterance.onerror = () => {
+                isTTSPlaying = false;
+                console.error("TTS error, resuming microphone processing.");
+                if (stopBtn.disabled === false) {
+                    log("Escuchando...", "idle");
+                }
+            };
+            // --- FIN DE LÓGICA DE CONTROL ---
+            
             // 1. Determinar el idioma de salida
             const selectedLangCode = languageSelect.value;
             let targetLang = 'en-US'; // Default para "Auto" (translate) o "Inglés"
@@ -382,14 +410,11 @@
             utterance.lang = targetLang;
             
             // 3. Intentar encontrar la mejor voz para ese idioma
-            // Usamos startsWith para encontrar 'es-ES' o 'es-MX' si targetLang es 'es'
             let voice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith(targetLang));
             
             if (voice) {
                 utterance.voice = voice;
             } else {
-                // Fallback si no se encuentra una voz específica (ej: 'es' no encuentra 'es-ES')
-                // Trata de encontrar una voz del idioma base (ej: 'es' de 'es-419')
                 const baseLang = targetLang.split('-')[0];
                 voice = window.speechSynthesis.getVoices().find(v => v.lang.startsWith(baseLang));
                 if(voice) {
@@ -398,7 +423,6 @@
                     console.warn(`No se encontró voz TTS para ${targetLang}. Usando el default del navegador.`);
                 }
             }
-            // --- FIN DE LA CORRECCIÓN ---
 
             utterance.pitch = 1;
             utterance.rate = 1; // Velocidad (1 = normal)
@@ -496,14 +520,14 @@
                     const trimmedLlmText = llmText.trim();
                     addMessageToChat('assistant', trimmedLlmText);
                     
-                    // --- MODIFICACIÓN: Comprobar el toggle antes de hablar ---
                     if (ttsToggle.checked) {
                         speakText(trimmedLlmText);
+                    } else {
+                         log("Escuchando...", "idle"); // Si el TTS está apagado, volver a escuchar
                     }
-                    // --- FIN DE LA MODIFICACIÓN ---
+                } else {
+                    log("Escuchando...", "idle"); 
                 }
-
-                log("Escuchando...", "idle"); 
 
             } catch (error) {
                 console.error('Error al enviar a LLM:', error);
@@ -581,6 +605,8 @@
             if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
             }
+            // Asegurarse de que el flag de TTS se resetee
+            isTTSPlaying = false; 
 
             if (socket) {
                 socket.close();
@@ -620,7 +646,6 @@
             llmPrompt.disabled = false;
             llmApiKey.disabled = false;
             llmModelName.disabled = false;
-            // --- AÑADIDO: Habilitar el toggle de TTS ---
             ttsToggle.disabled = false;
         }
 
@@ -630,6 +655,7 @@
             if ('speechSynthesis' in window) {
                 window.speechSynthesis.cancel();
             }
+            isTTSPlaying = false; // Asegurarse de que el flag esté reseteado
 
             log("Iniciando...", "processing");
             startBtn.disabled = true;
@@ -641,7 +667,6 @@
             llmPrompt.disabled = true;
             llmApiKey.disabled = true;
             llmModelName.disabled = true;
-            // --- AÑADIDO: Deshabilitar el toggle de TTS ---
             ttsToggle.disabled = true;
 
             try {
@@ -672,6 +697,7 @@
                         if ('speechSynthesis' in window) {
                             window.speechSynthesis.cancel();
                         }
+                        isTTSPlaying = false; // Cancelar flag si el TTS es interrumpido
 
                         log("Hablando...", "speaking");
                         
@@ -745,6 +771,13 @@
 
                 // 5. Configurar el listener del Worklet
                 workletNode.port.onmessage = (event) => {
+                    // --- INICIO DE LA MODIFICACIÓN ---
+                    // Si el TTS está hablando, ignorar completamente el audio.
+                    if (isTTSPlaying) {
+                        return;
+                    }
+                    // --- FIN DE LA MODIFICACIÓN ---
+
                     // event.data es un Float32Array
                     handleAudioData(event.data);
                     
