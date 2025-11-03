@@ -11,10 +11,19 @@ curl -X 'POST' \
 
   pip install fastapi-cors
 
-  python api_whisper.py
+
+## Iniciar
+uv venv -p 3.11 .venv
+.\.venv\Scripts\activate
 
 
-Correr servidor whisper(audio -> texto):
+## Correr servidor whisper(audio -> texto):
 uvicorn api_whisper:app --host 127.0.0.1 --port 8000
-Correr servidor VAD (detección de voz en audio):
+
+## Correr servidor VAD (detección de voz en audio):
 uvicorn api_vad:app --host 127.0.0.1 --port 8001
+
+## Correr web cliente:
+python -m http.server 8080
+
+## Probar endpoint de traducción:

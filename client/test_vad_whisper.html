@@ -29,14 +29,6 @@
             margin-top: 0;
             margin-bottom: 1.5em;
         }
-        h2 {
-            font-size: 1.2rem;
-            color: #555;
-            margin-top: 2em;
-            margin-bottom: 0.5em;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 0.5em;
-        }
         .controls {
             display: flex;
             flex-direction: column;
@@ -88,18 +80,13 @@
             color: #555;
             font-size: 0.9rem;
         }
-        select, input[type="text"], textarea {
+        select {
             font-size: 1rem;
             padding: 0.8em;
             border: 1px solid #ddd;
             border-radius: 8px;
             background-color: #fff;
             width: 100%;
-            box-sizing: border-box; /* Para que el padding no rompa el ancho */
-        }
-        textarea {
-            font-family: inherit;
-            resize: vertical;
         }
         .status {
             display: flex;
@@ -125,26 +112,23 @@
             color: #34495e;
             font-weight: 500;
         }
-        #output-container, #llm-output-container {
+        #output-container {
             background: #f9f9f9;
             border: 1px solid #e0e0e0;
             border-radius: 8px;
-            min-height: 100px;
-            max-height: 250px;
+            min-height: 150px;
+            max-height: 300px;
             overflow-y: auto;
             padding: 1.5em;
             color: #2c3e50;
             line-height: 1.6;
         }
-        #llm-output-container {
-            background: #f0f4f8; /* Color diferente para LLM */
-        }
-        #output-container p, #llm-output-container p {
+        #output-container p {
             margin: 0 0 0.8em 0;
             padding-bottom: 0.8em;
             border-bottom: 1px solid #eee;
         }
-        #output-container p:last-child, #llm-output-container p:last-child {
+        #output-container p:last-child {
             margin-bottom: 0;
             border-bottom: none;
         }
@@ -165,7 +149,6 @@
                 <button id="start-btn">Iniciar Traducción</button>
                 <button id="stop-btn" disabled>Detener</button>
             </div>
-            
             <div class="selectors">
                 <div class="form-group">
                     <label for="model-select">Modelo Whisper:</label>
@@ -191,17 +174,6 @@
                     </select>
                 </div>
             </div>
-
-            <div class="form-group">
-                <label for="llm-api-url">URL del API del LLM (Ej: Gemini):</label>
-                <input type="text" id="llm-api-url" placeholder="https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=TU_API_KEY">
-            </div>
-
-            <div class="form-group">
-                <label for="llm-prompt">Prompt del LLM (opcional):</label>
-                <textarea id="llm-prompt" rows="3" placeholder="Ej: Resume el siguiente texto en una frase:"></textarea>
-            </div>
-
         </div>
 
         <div class="status">
@@ -209,11 +181,7 @@
             <div id="status-log">Haz clic en "Iniciar" para comenzar</div>
         </div>
 
-        <h2>Transcripción (Whisper)</h2>
         <div id="output-container"></div>
-        
-        <h2>Respuesta (LLM)</h2>
-        <div id="llm-output-container"></div>
     </main>
 
     <script type="module">
@@ -225,19 +193,16 @@
         const outputDiv = document.getElementById('output-container');
         const modelSelect = document.getElementById('model-select');
         const languageSelect = document.getElementById('language-select');
-        // Nuevos elementos
-        const llmApiUrl = document.getElementById('llm-api-url');
-        const llmPrompt = document.getElementById('llm-prompt');
-        const llmOutputDiv = document.getElementById('llm-output-container');
 
         // --- Configuración de APIs y Audio ---
         const VAD_API_URL = "ws://127.0.0.1:8001/ws/vad";
         const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
         
         const SAMPLE_RATE = 16000;
-        const PRE_ROLL_TIME = 2; // Segundos de audio *antes* de speech_start (corregido)
-        const POST_ROLL_TIME = 1; // Segundos de audio *después* de speech_end (corregido)
+        const PRE_ROLL_TIME = 3; // Segundos de audio *antes* de speech_start
+        const POST_ROLL_TIME = 3; // Segundos de audio *después* de speech_end
 
+        // Convertir tiempo a muestras
         const PRE_ROLL_SAMPLES = SAMPLE_RATE * PRE_ROLL_TIME;
         
         // --- Variables de Estado Globales ---
@@ -246,13 +211,21 @@
         let workletNode = null;
         let mediaStreamSource = null;
 
+        // Buffers de audio:
+        // preRollBuffer: Almacena constantemente los últimos 2 seg
         let preRollBuffer = new Float32Array(0);
+        // speechBuffer: Almacena el audio que se enviará a Whisper
         let speechBuffer = new Float32Array(0);
+        
+        // Estado de grabación (controlado por VAD)
         let isRecording = false;
+        // Temporizador para el post-roll
         let postRollTimer = null;
 
         /**
          * Actualiza el log de estado y el estilo de la luz VAD.
+         * @param {string} message - El texto a mostrar.
+         * @param {'idle' | 'processing' | 'error' | 'speaking'} state - El estado visual.
          */
         function log(message, state = 'idle') {
             statusLog.textContent = message;
@@ -270,18 +243,22 @@
 
         /**
          * Maneja los datos de audio entrantes desde el AudioWorklet.
+         * @param {Float32Array} audioData - El chunk de audio del micrófono.
          */
         function handleAudioData(audioData) {
             if (isRecording) {
+                // Si estamos grabando (VAD activo), añadir al speechBuffer
                 const newBuffer = new Float32Array(speechBuffer.length + audioData.length);
                 newBuffer.set(speechBuffer);
                 newBuffer.set(audioData, speechBuffer.length);
                 speechBuffer = newBuffer;
             } else {
+                // Si no estamos grabando, añadir al preRollBuffer
                 const newBuffer = new Float32Array(preRollBuffer.length + audioData.length);
                 newBuffer.set(preRollBuffer);
                 newBuffer.set(audioData, preRollBuffer.length);
                 
+                // Recortar el preRollBuffer para que contenga solo los últimos PRE_ROLL_SAMPLES
                 if (newBuffer.length > PRE_ROLL_SAMPLES) {
                     preRollBuffer = newBuffer.slice(newBuffer.length - PRE_ROLL_SAMPLES);
                 } else {
@@ -291,82 +268,22 @@
         }
         
         /**
-         * NUEVA FUNCIÓN: Envía el texto transcrito a la API del LLM.
-         * @param {string} textFromWhisper - El texto devuelto por Whisper.
-         */
-        async function sendToLLM(textFromWhisper) {
-            const apiUrl = llmApiUrl.value.trim();
-            const userPrompt = llmPrompt.value.trim();
-            
-            // Si no hay URL, no hacemos nada y volvemos a "Escuchando".
-            if (!apiUrl) {
-                log("Escuchando... (URL de LLM no configurada)", "idle");
-                return; 
-            }
-
-            log("Enviando a LLM...", "processing");
-
-            // Construir el prompt final
-            let fullPrompt = textFromWhisper;
-            if (userPrompt) {
-                fullPrompt = `${userPrompt}\n\n"${textFromWhisper}"`;
-            }
-
-            // Asumimos el formato de API de Gemini (puedes cambiar esto)
-            const payload = {
-                contents: [{
-                    parts: [{ "text": fullPrompt }]
-                }]
-            };
-
-            try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(payload)
-                });
-
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`Error de LLM API: ${response.statusText} - ${errorData.error.message}`);
-                }
-
-                const data = await response.json();
-
-                // Asumimos el formato de respuesta de Gemini
-                const llmText = data.candidates[0].content.parts[0].text;
-                
-                if (llmText && llmText.trim()) {
-                    llmOutputDiv.innerHTML += `<p>${llmText.trim()}</p>`;
-                    llmOutputDiv.scrollTop = llmOutputDiv.scrollHeight;
-                }
-
-                log("Escuchando...", "idle"); // Volver a escuchar después de la respuesta del LLM
-
-            } catch (error) {
-                console.error('Error al enviar a LLM:', error);
-                log(`Error de LLM: ${error.message}`, "error");
-                llmOutputDiv.innerHTML += `<p style="color:red;"><strong>Error de LLM:</strong> ${error.message}</p>`;
-                llmOutputDiv.scrollTop = llmOutputDiv.scrollHeight;
-            }
-        }
-
-
-        /**
          * Envía el audio acumulado a la API de Whisper.
+         * Esta función se llama por el temporizador de post-roll.
          */
         async function sendToWhisper() {
-            if (speechBuffer.length < SAMPLE_RATE * 0.5) { 
+            if (speechBuffer.length < SAMPLE_RATE * 0.5) { // No enviar si es menos de 0.5 seg
                 log("Audio demasiado corto, descartado.", "idle");
-                speechBuffer = new Float32Array(0); 
+                speechBuffer = new Float32Array(0); // Limpiar buffer
                 return;
             }
             
-            log("Traduciendo (Whisper)...", "processing");
+            log("Traduciendo audio...", "processing");
             
+            // Crear el Blob WAV
             const wavBlob = createWavBlob(speechBuffer, SAMPLE_RATE);
+            
+            // Limpiar el speechBuffer INMEDIATAMENTE después de crear el Blob
             speechBuffer = new Float32Array(0);
             
             const formData = new FormData();
@@ -385,27 +302,24 @@
                 }
 
                 const data = await response.json();
+                
+                // CAMBIO: Se busca 'data.result_text'
                 const translationText = data.result_text; 
 
+                // Verificar que 'translationText' sea un string antes de usar .trim()
                 if (typeof translationText === 'string') {
                     const trimmedText = translationText.trim();
                     if (trimmedText) {
-                        // 1. Mostrar la transcripción de Whisper
                         outputDiv.innerHTML += `<p>${trimmedText}</p>`;
-                        outputDiv.scrollTop = outputDiv.scrollHeight;
-                        
-                        // 2. Enviar el texto al LLM
-                        await sendToLLM(trimmedText); // <-- ¡NUEVA LLAMADA!
-                        
-                    } else {
-                        // El audio estaba en silencio, volvemos a escuchar
-                        log("Escuchando...", "idle");
+                        outputDiv.scrollTop = outputDiv.scrollHeight; // Auto-scroll
                     }
+                    // Si trimmedText está vacío (audio silencioso), no se muestra nada.
                 } else {
                     console.warn("La respuesta de Whisper no contenía una clave 'result_text' válida.");
-                    log("Escuchando...", "idle");
                 }
                 
+                log("Escuchando...", "idle");
+
             } catch (error) {
                 console.error('Error al enviar a Whisper:', error);
                 log(`Error de Whisper: ${error.message}`, "error");
@@ -439,6 +353,7 @@
                 postRollTimer = null;
             }
             
+            // Limpiar buffers y estado
             preRollBuffer = new Float32Array(0);
             speechBuffer = new Float32Array(0);
             isRecording = false;
@@ -446,11 +361,8 @@
             log('Haz clic en "Iniciar" para comenzar', 'idle');
             startBtn.disabled = false;
             stopBtn.disabled = true;
-            // Habilitar todos los controles
             modelSelect.disabled = false;
             languageSelect.disabled = false;
-            llmApiUrl.disabled = false;
-            llmPrompt.disabled = false;
         }
 
         // --- Event Listener del Botón de Inicio ---
@@ -458,11 +370,8 @@
             log("Iniciando...", "processing");
             startBtn.disabled = true;
             stopBtn.disabled = false;
-            // Deshabilitar todos los controles
             modelSelect.disabled = true;
             languageSelect.disabled = true;
-            llmApiUrl.disabled = true;
-            llmPrompt.disabled = true;
 
             try {
                 // 1. Conectar al WebSocket de VAD
@@ -490,20 +399,28 @@
                     if (msg.event === "speech_start") {
                         log("Hablando...", "speaking");
                         
+                        // Si hay un temporizador de post-roll corriendo, cancelarlo.
+                        // Esto une frases que están muy juntas.
                         if (postRollTimer) {
                             clearTimeout(postRollTimer);
                             postRollTimer = null;
                         }
+
+                        // Si no estábamos grabando, volcamos el pre-roll
                         if (!isRecording) {
                             speechBuffer = new Float32Array(preRollBuffer);
                         }
+                        
                         isRecording = true;
 
                     } else if (msg.event === "speech_end") {
                         log("Fin de voz detectado...", "processing");
                         
+                        // Solo si estábamos grabando, iniciamos el post-roll
                         if (isRecording) {
                             isRecording = false;
+                            
+                            // Iniciar temporizador para enviar a Whisper
                             postRollTimer = setTimeout(() => {
                                 sendToWhisper();
                                 postRollTimer = null;
@@ -519,28 +436,24 @@
                     sampleRate: SAMPLE_RATE
                 });
                 
+                // Política de Autoplay: Reanudar el contexto
                 await audioContext.resume();
 
-                // 4. Crear el Worklet (usando data: URL para evitar errores de 'blob:null')
-                const workletBlob = new Blob([`
+                // 4. Crear el Worklet
+                const workletURL = URL.createObjectURL(new Blob([`
                     class VADAudioProcessor extends AudioWorkletProcessor {
                         process(inputs, outputs, parameters) {
                             const inputChannel = inputs[0][0];
                             if (inputChannel) {
-                                // Enviar una copia, no transferir, para que 
-                                // el hilo principal pueda enviarlo al WebSocket
-                                this.port.postMessage(inputChannel.slice());
+                                this.port.postMessage(inputChannel);
                             }
                             return true;
                         }
                     }
                     registerProcessor('vad-audio-processor', VADAudioProcessor);
-                `], { type: 'application/javascript' });
-                
-                const workletURL = URL.createObjectURL(workletBlob);
-                
+                `], { type: 'application/javascript' }));
+
                 await audioContext.audioWorklet.addModule(workletURL);
-                URL.revokeObjectURL(workletURL); // Limpiar el blob URL
 
                 workletNode = new AudioWorkletNode(audioContext, 'vad-audio-processor');
 
@@ -558,6 +471,7 @@
                 // 6. Obtener micrófono y conectar el grafo de audio
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
+                // Comprobar si el contexto sigue vivo (evitar race condition)
                 if (!audioContext) {
                     throw new Error("El contexto de audio se cerró debido a un error de conexión.");
                 }
@@ -597,6 +511,7 @@
             writeString(view, 36, 'data');
             view.setUint32(40, audioData.length * 2, true);
             
+            // Escribir las muestras PCM
             let offset = 44;
             for (let i = 0; i < audioData.length; i++, offset += 2) {
                 const s = Math.max(-1, Math.min(1, audioData[i]));
