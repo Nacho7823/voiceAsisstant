@@ -141,6 +141,33 @@ const modelSelect = document.getElementById('model-select');
 const modelInfoDiv = document.getElementById('model-info');
 const languageSelect = document.getElementById('language-select');
 
+// Crear botón de parada dinámicamente
+const stopButton = document.createElement('button');
+stopButton.type = 'button';
+stopButton.textContent = 'Parar';
+stopButton.style.marginLeft = '8px';
+stopButton.disabled = true;
+submitButton.insertAdjacentElement('afterend', stopButton);
+
+let currentJobId = null;
+let currentController = null;
+
+// Añadir selector dinámico de modo (stream / sin stream)
+(function insertModeSelector() {
+    const modeGroup = document.createElement('div');
+    modeGroup.className = 'form-group';
+    modeGroup.innerHTML = `
+        <label>Modo de respuesta:</label>
+        <div>
+            <label style="font-weight:400; margin-right:12px;"><input type="radio" name="mode" value="stream" checked> Streaming (SSE)</label>
+            <label style="font-weight:400;"><input type="radio" name="mode" value="nostream"> Sin streaming (respuesta completa)</label>
+        </div>
+    `;
+    // Insertar al inicio del formulario (antes del selector de modelo)
+    const firstGroup = uploadForm.querySelector('.form-group');
+    uploadForm.insertBefore(modeGroup, firstGroup);
+})();
+
 // Información aproximada de tamaño/peso por modelo (valores aproximados)
 const MODEL_SIZES = {
     'tiny': { size: '≈ 35 MB', ram: '≈ 100 MB' },
@@ -163,6 +190,97 @@ function updateModelInfo() {
 updateModelInfo();
 modelSelect.addEventListener('change', updateModelInfo);
 
+// Obtener modo seleccionado
+function getMode() {
+    const r = document.querySelector('input[name="mode"]:checked');
+    return r ? r.value : 'stream';
+}
+
+// Mostrar/ocultar stopButton según modo
+function refreshModeUI() {
+    const mode = getMode();
+    if (mode === 'stream') {
+        stopButton.style.display = '';
+    } else {
+        stopButton.style.display = 'none';
+    }
+    // reset any previous state
+    currentJobId = null;
+}
+document.addEventListener('change', (e) => {
+    if (e.target && e.target.name === 'mode') refreshModeUI();
+});
+refreshModeUI();
+
+// Parse simple SSE chunks ("data: ...\n\n")
+function parseSSEChunk(chunk) {
+    const lines = chunk.split(/\r?\n/);
+    for (const line of lines) {
+        if (!line) continue;
+        if (line.startsWith('data:')) {
+            const payload = line.replace(/^data:\s*/, '');
+            try {
+                const obj = JSON.parse(payload);
+                handleEvent(obj);
+            } catch (e) {
+                console.error('No JSON payload in SSE data:', payload);
+            }
+        }
+    }
+}
+
+function handleEvent(obj) {
+    const type = obj.type;
+    const payload = obj.payload || {};
+    if (type === 'meta') {
+        currentJobId = payload.job_id;
+        stopButton.disabled = false;
+        statusDiv.textContent = `Transcripción en curso (job: ${currentJobId})`;
+    } else if (type === 'segment') {
+        // Append incremental text
+        resultText.textContent += payload.text || '';
+        statusDiv.textContent = 'Recibiendo segmentos...';
+    } else if (type === 'stopped') {
+        statusDiv.textContent = 'Transcripción detenida por solicitud.';
+        stopButton.disabled = true;
+        cleanupAfterStream();
+    } else if (type === 'error') {
+        statusDiv.textContent = 'Error en servidor: ' + (payload.detail || 'desconocido');
+        stopButton.disabled = true;
+        cleanupAfterStream();
+    } else if (type === 'end') {
+        statusDiv.textContent = 'Transcripción finalizada';
+        stopButton.disabled = true;
+        cleanupAfterStream();
+    }
+}
+
+function cleanupAfterStream() {
+    currentJobId = null;
+    if (currentController) {
+        try { currentController.abort(); } catch (e) {}
+        currentController = null;
+    }
+    submitButton.disabled = false;
+}
+
+// Manejo del botón "Parar"
+stopButton.addEventListener('click', async () => {
+    if (!currentJobId) return;
+    stopButton.disabled = true;
+    statusDiv.textContent = 'Solicitando parada...';
+    try {
+        await fetch(`http://127.0.0.1:8000/stop/${encodeURIComponent(currentJobId)}`, {
+            method: 'POST'
+        });
+        // El servidor enviará evento "stopped" que actualizará el estado.
+    } catch (err) {
+        console.error('Error al pedir parada:', err);
+        statusDiv.textContent = 'Error al pedir parada';
+        submitButton.disabled = false;
+    }
+});
+
 uploadForm.addEventListener('submit', async (event) => {
     event.preventDefault();
 
@@ -177,33 +295,93 @@ uploadForm.addEventListener('submit', async (event) => {
 
     // 2. Deshabilitar botón y mostrar estado de carga
     submitButton.disabled = true;
-    statusDiv.textContent = 'Traduciendo... (El primer modelo puede tardar en cargar)';
+    stopButton.disabled = true;
     resultText.textContent = '';
 
-    try {
-        // 3. Enviar la petición a la API
-        const response = await fetch('http://127.0.0.1:8000/translate', {
-            method: 'POST',
-            body: formData,
-        });
+    const mode = getMode();
+    if (mode === 'stream') {
+        statusDiv.textContent = 'Iniciando streaming... (el modelo puede tardar en cargar)';
+        try {
+            // Usamos fetch con streaming (ReadableStream) para POST multipart y leer respuesta SSE
+            currentController = new AbortController();
+            const resp = await fetch('http://127.0.0.1:8000/translate_stream', {
+                method: 'POST',
+                body: formData,
+                signal: currentController.signal
+            });
 
-        // 4. Analizar la respuesta
-        const data = await response.json();
+            if (!resp.ok) {
+                const err = await resp.text();
+                statusDiv.textContent = 'Error de la API: ' + resp.status;
+                resultText.textContent = err;
+                submitButton.disabled = false;
+                stopButton.disabled = true;
+                return;
+            }
 
-        if (response.ok) {
-            statusDiv.textContent = `Traducción completada (Idioma detectado: ${data.detected_language})`;
-            resultText.textContent = data.result_text;
-        } else {
-            statusDiv.textContent = 'Error de la API:';
-            resultText.textContent = data.detail || 'Ocurrió un error desconocido';
+            stopButton.disabled = false;
+
+            // Leer el body por chunks e interpretar como SSE (data: ...)
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                // SSE usa doble salto de línea para separar eventos
+                let parts = buffer.split(/\n\n/);
+                for (let i = 0; i < parts.length - 1; i++) {
+                    const part = parts[i].trim();
+                    if (part) parseSSEChunk(part);
+                }
+                buffer = parts[parts.length - 1];
+            }
+
+            // Procesar resto
+            if (buffer.trim()) {
+                parseSSEChunk(buffer.trim());
+            }
+
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                statusDiv.textContent = 'Conexión abortada';
+            } else {
+                console.error('Error de conexión:', error);
+                statusDiv.textContent = 'Error de conexión';
+                resultText.textContent = String(error);
+            }
+            cleanupAfterStream();
+        } finally {
+            submitButton.disabled = false;
+            stopButton.disabled = true;
         }
-
-    } catch (error) {
-        console.error('Error de conexión:', error);
-        statusDiv.textContent = 'Error de conexión:';
-        resultText.textContent = 'No se pudo conectar a la API en http://127.0.0.1:8000. \n¿Revisaste que el script de Python esté corriendo y que tenga CORS habilitado?';
-    } finally {
-        submitButton.disabled = false;
+    } else {
+        // Modo sin streaming: petición tradicional a /translate
+        statusDiv.textContent = 'Enviando archivo y esperando resultado completo...';
+        try {
+            const resp = await fetch('http://127.0.0.1:8000/translate', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await resp.json();
+            if (resp.ok) {
+                statusDiv.textContent = `Traducción completada (Idioma detectado: ${data.detected_language})`;
+                resultText.textContent = data.result_text || '';
+            } else {
+                statusDiv.textContent = 'Error de la API:';
+                resultText.textContent = data.detail || JSON.stringify(data);
+            }
+        } catch (err) {
+            console.error('Error petición no-stream:', err);
+            statusDiv.textContent = 'Error de conexión';
+            resultText.textContent = String(err);
+        } finally {
+            submitButton.disabled = false;
+            stopButton.disabled = true;
+        }
     }
 });
     </script>
