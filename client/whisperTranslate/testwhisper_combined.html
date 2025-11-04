@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cliente Whisper API (subida solo)</title>
+    <style>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 2em;
+    background-color: #f9f9f9;
+    display: flex;
+    justify-content: center;
+}
+main {
+    width: 100%;
+    max-width: 600px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    padding: 2em;
+}
+h1 {
+    color: #333;
+    text-align: center;
+}
+form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5em;
+}
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+label {
+    font-weight: 600;
+    color: #555;
+}
+input[type="file"], select, button {
+    font-size: 1rem;
+    padding: 0.8em;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+}
+button {
+    background-color: #007aff;
+    color: white;
+    font-weight: 600;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+button:hover {
+    background-color: #0056b3;
+}
+button:disabled {
+    background-color: #cce4ff;
+    cursor: not-allowed;
+}
+#result-container {
+    margin-top: 2em;
+}
+#status {
+    font-style: italic;
+    color: #666;
+    text-align: center;
+}
+pre {
+    background: #f4f4f4;
+    padding: 1em;
+    border-radius: 6px;
+    border: 1px solid #eee;
+    white-space: pre-wrap; /* Para que el texto no se salga */
+    word-wrap: break-word;
+    font-size: 0.95em;
+    line-height: 1.6;
+}
+
+.model-info {
+    margin-top: 0.5em;
+    color: #666;
+    font-size: 0.9em;
+}
+    </style>
+</head>
+<body>
+
+    <main>
+        <h1>Traductor de Audio (Whisper)</h1>
+        
+        <form id="upload-form" enctype="multipart/form-data">
+            
+            <div class="form-group">
+                <label for="model-select">1. Elige el modelo:</label>
+                <select id="model-select" name="model_size">
+                    <option value="tiny">Tiny (muy rápido, baja precisión)</option>
+                    <option value="base" selected>Base (rápido, OK precisión)</option>
+                    <option value="small">Small (balanceado)</option>
+                    <option value="medium">Medium (lento, buena precisión)</option>
+                    <option value="large-v3">Large-v3 (muy lento, alta precisión)</option>
+                </select>
+                <div id="model-info" class="model-info">Tamaño aproximado: —</div>
+            </div>
+
+            <div class="form-group">
+                <label for="language-select">Idioma de destino (opcional):</label>
+                <select id="language-select" name="target_language">
+                    <option value="auto" selected>Detectar automáticamente</option>
+                    <option value="es">Español</option>
+                    <option value="en">Inglés</option>
+                    <option value="fr">Francés</option>
+                    <option value="de">Alemán</option>
+                    <option value="pt">Portugués</option>
+                    <option value="it">Italiano</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="file-input">2. Sube tu archivo de audio (mp3, wav, m4a...):</label>
+                <input id="file-input" type="file" name="audio_file" accept="audio/*" required>
+            </div>
+            
+            <button id="submit-button" type="submit">Traducir Audio</button>
+        </form>
+
+        <div id="result-container">
+            <div id="status">Esperando archivo...</div>
+            <pre id="result-text"></pre>
+        </div>
+    </main>
+
+    <script>
+const uploadForm = document.getElementById('upload-form');
+const submitButton = document.getElementById('submit-button');
+const statusDiv = document.getElementById('status');
+const resultText = document.getElementById('result-text');
+const modelSelect = document.getElementById('model-select');
+const modelInfoDiv = document.getElementById('model-info');
+const languageSelect = document.getElementById('language-select');
+
+// Información aproximada de tamaño/peso por modelo (valores aproximados)
+const MODEL_SIZES = {
+    'tiny': { size: '≈ 35 MB', ram: '≈ 100 MB' },
+    'base': { size: '≈ 70 MB', ram: '≈ 200 MB' },
+    'small': { size: '≈ 240 MB', ram: '≈ 500 MB' },
+    'medium': { size: '≈ 760 MB', ram: '≈ 1.5 GB' },
+    'large-v3': { size: '≈ 1.6 GB', ram: '≈ 4+ GB' }
+};
+
+function updateModelInfo() {
+    const model = modelSelect.value;
+    const info = MODEL_SIZES[model];
+    if (info) {
+        modelInfoDiv.textContent = `Tamaño en disco (aprox.): ${info.size} · RAM requerida (aprox.): ${info.ram}`;
+    } else {
+        modelInfoDiv.textContent = 'Tamaño aproximado: —';
+    }
+}
+
+updateModelInfo();
+modelSelect.addEventListener('change', updateModelInfo);
+
+uploadForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    // 1. Obtener los datos del formulario
+    const formData = new FormData(uploadForm);
+
+    // Añadir idioma seleccionado (si aplica)
+    const selectedLang = languageSelect?.value;
+    if (selectedLang) {
+        formData.set('language', selectedLang);
+    }
+
+    // 2. Deshabilitar botón y mostrar estado de carga
+    submitButton.disabled = true;
+    statusDiv.textContent = 'Traduciendo... (El primer modelo puede tardar en cargar)';
+    resultText.textContent = '';
+
+    try {
+        // 3. Enviar la petición a la API
+        const response = await fetch('http://127.0.0.1:8000/translate', {
+            method: 'POST',
+            body: formData,
+        });
+
+        // 4. Analizar la respuesta
+        const data = await response.json();
+
+        if (response.ok) {
+            statusDiv.textContent = `Traducción completada (Idioma detectado: ${data.detected_language})`;
+            resultText.textContent = data.result_text;
+        } else {
+            statusDiv.textContent = 'Error de la API:';
+            resultText.textContent = data.detail || 'Ocurrió un error desconocido';
+        }
+
+    } catch (error) {
+        console.error('Error de conexión:', error);
+        statusDiv.textContent = 'Error de conexión:';
+        resultText.textContent = 'No se pudo conectar a la API en http://127.0.0.1:8000. \n¿Revisaste que el script de Python esté corriendo y que tenga CORS habilitado?';
+    } finally {
+        submitButton.disabled = false;
+    }
+});
+    </script>
+</body>
+</html>

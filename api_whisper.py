@@ -1,3 +1,81 @@
+'''API Whisper - Documentación de la API
+
+Descripción
+-----------
+API ligera basada en FastAPI que utiliza `faster_whisper.WhisperModel` para:
+- Transcribir audio a texto.
+- Traducir audio a otro idioma cuando procede (autodetección o petición explícita).
+
+La API espera recibir archivos de audio mediante multipart/form-data y devuelve el texto resultante junto con metadatos sobre el modelo y el idioma detectado/solicitado.
+
+Endpoints
+---------
+GET /models
+    - Descripción: Devuelve la lista de tamaños de modelo soportados.
+    - Respuesta (200): JSON con lista de modelos, p. ej. ["tiny","base","small","medium","large-v2","large-v3"]
+
+GET /languages
+    - Descripción: Devuelve la lista de idiomas soportados por la API (incluye "auto").
+    - Respuesta (200): JSON con lista de códigos de idioma, p. ej. ["auto","en","es",...]
+
+POST /translate
+    - Descripción: Transcribe o traduce un archivo de audio.
+    - Tipo: multipart/form-data
+    - Campos:
+        - model_size (form, opcional): tamaño del modelo a usar. Valores permitidos: "tiny", "base", "small", "medium", "large-v2", "large-v3". Default: "small".
+        - audio_file (file, requerido): archivo de audio a procesar (wav, mp3, m4a, etc).
+        - language (form, opcional): código de idioma solicitado. 
+            - "auto" o cadena vacía ("") → autodetección.
+            - "en","es","fr",... → forzar ese idioma.
+            - Default en el servidor: "es" si el cliente no envía el campo.
+    - Comportamiento:
+        - Si `language` es "" o "auto" se realiza autodetección. 
+        - Si autodetect o idioma solicitado es "en", la operación usará task="translate" (traduce a inglés->target language por defecto del modelo).
+        - Si se especifica un idioma distinto de "en" y no es autodetección, se usa task="transcribe".
+        - Si la opción SAVE_AUDIOS está activa, el audio se guarda en la carpeta `audios/`; si no, se usa un archivo temporal que se borra al finalizar.
+    - Respuesta (200): JSON con:
+        - model_used: tamaño del modelo usado.
+        - detected_language: idioma detectado por el modelo.
+        - language_requested: valor recibido en el formulario (puede ser "").
+        - task_used: "translate" o "transcribe".
+        - result_text: texto transcrito/traducido (string).
+    - Errores:
+        - 400/422: errores de validación de request por parte de FastAPI.
+        - 500: errores internos (carga de modelo, I/O, transcripción). Se devuelve {"detail": "..."}.
+
+Configuración importante (en el código)
+---------------------------------------
+- SAVE_AUDIOS (bool): si True guarda los audios en `audios/`. Si False usa temporales y los borra.
+- MODELS_DIR / AUDIOS_DIR: directorios locales para caché de modelos y audios.
+- COMPUTE_DEVICE: "cpu", "cuda" o "mps".
+- COMPUTE_TYPE: "int8", "int16", "float16", "float32".
+
+Ejemplo de uso (curl)
+---------------------
+curl -X POST "http://127.0.0.1:8000/translate" \
+  -F "model_size=small" \
+  -F "language=es" \
+  -F "audio_file=@./ejemplo.wav"
+
+Respuesta esperada (ejemplo)
+---------------------------
+{
+  "model_used": "small",
+  "detected_language": "es",
+  "language_requested": "es",
+  "task_used": "transcribe",
+  "result_text": "Texto transcrito o traducido..."
+}
+
+Notas de implementación
+-----------------------
+- La API mantiene un caché en memoria (`model_cache`) para evitar recargar modelos entre peticiones.
+- CORS está configurado con allow_origins="*" para facilitar pruebas; ajustar en producción.
+- Los modelos y caches se almacenan en la carpeta `models/` (variable HF_HOME/TRANSFORMERS_CACHE/XDG_CACHE_HOME).
+- Para correr el servidor localmente:
+    uvicorn api_whisper:app --host 127.0.0.1 --port 8000
+
+'''
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from faster_whisper import WhisperModel
@@ -26,9 +104,12 @@ print(f"Model cache dir: {MODELS_DIR}")
 # ------------------
 
 # --- Configuración (Modifica esto según tu PC) ---
-COMPUTE_DEVICE = "cpu"
-COMPUTE_TYPE = "int8" 
+COMPUTE_DEVICE = "cpu" # Opciones: "cpu", "cuda", "mps"
+COMPUTE_TYPE = "int8" # Opciones: "int8", "int16", "float16", "float32"
 # ----------------------------------------------------
+
+availableModels = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
+availableLanguajes = ["auto", "en", "es", "fr", "de", "it", "pt", "ru", "zh", "ja", "ko"]
 
 ModelSize = Literal["tiny", "base", "small", "medium", "large-v2", "large-v3"]
 
@@ -65,13 +146,28 @@ def get_model(model_size: str) -> WhisperModel:
             )
     return model_cache[model_size]
 
+@app.get("/models")
+async def getModels():
+    """
+    Endpoint para obtener la lista de modelos disponibles.
+    """
+    return {
+        availableModels
+    }
+    
+@app.get("/languages")
+async def getLanguajes():
+    return {
+        availableLanguajes
+    }
+
 @app.post("/translate")
 async def translate_audio(
-    model_size: ModelSize = Form("base"),
+    model_size: ModelSize = Form("small"),
     audio_file: UploadFile = File(...),
     # El cliente envía "" (vacío) para auto, no "auto". El default "auto"
     # solo se usaría si el cliente NO envía el parámetro.
-    language: str = Form("auto") 
+    language: str = Form("es") 
 ):
     """
     Endpoint de API para traducir audio.

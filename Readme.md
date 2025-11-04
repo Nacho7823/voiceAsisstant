@@ -1,16 +1,18 @@
+# Voice asistant
+
+## Instalación de dependencias
+
 pip install "fastapi[all]" uvicorn faster-whisper python-multipart
+pip install fastapi-cors
 
 
-uvicorn api_whisper:app --host 127.0.0.1 --port 8000
-
-
+## Api de whisper
+```bash
 curl -X 'POST' \
   'http://127.0.0.1:8000/translate' \
   -F 'model_size=small' \
   -F 'audio_file=@/ruta/a/tu/audio_en_espanol.mp3'
-
-  pip install fastapi-cors
-
+```
 
 ## Iniciar
 uv venv -p 3.11 .venv

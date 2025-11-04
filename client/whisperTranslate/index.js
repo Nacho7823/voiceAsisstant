@@ -116,7 +116,7 @@ uploadForm.addEventListener('submit', async (event) => {
         // Añadir idioma seleccionado (si aplica)
         const selectedLang = languageSelect?.value;
         if (selectedLang) {
-            formData.set('target_language', selectedLang);
+            formData.set('language', selectedLang);
         }
 
         // Si hay una grabación en memoria, usarla en lugar del input file
