@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Título actualizado -->
+    <title>Demo de RNNoise.js (Supresión de Ruido)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 1. Cargar la NUEVA librería: rnnoise-wasm (auto-contenida) -->
+    <script src="https://cdn.jsdelivr.net/npm/rnnoise-wasm@0.0.5/dist/rnnoise.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Estilo para el interruptor (toggle) */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #4ade80;
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #4ade80;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-full max-w-md">
+        <!-- Título actualizado -->
+        <h1 class="text-3xl font-bold text-center mb-6 text-green-400">Demo de RNNoise.js (NS)</h1>
+        <p class="text-gray-400 mb-6 text-center">
+            Prueba la Supresión de Ruido (NS) de RNNoise. Habla y activa/desactiva el interruptor
+            para oír la diferencia.
+        </p>
+
+        <!-- Controles de Audio -->
+        <div class="space-y-4 mb-8">
+            <div class="flex items-center justify-between bg-gray-700 p-4 rounded-lg">
+                <label for="rnnoise" class="font-medium text-lg">Habilitar RNNoise (NS)</label>
+                <!-- Interruptor (Toggle) -->
+                <div class="relative inline-block w-14 h-8 align-middle select-none transition duration-200 ease-in">
+                    <input type="checkbox" name="rnnoise" id="rnnoise" class="toggle-checkbox absolute block w-8 h-8 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                    <label for="rnnoise" class="toggle-label block overflow-hidden h-8 rounded-full bg-gray-600 cursor-pointer"></label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Botones de Acción -->
+        <div class="flex space-x-4 mb-6">
+            <!-- AÑADIDO 'disabled' para que no se pueda hacer clic hasta que la librería cargue -->
+            <button id="startButton" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 disabled:bg-gray-500" disabled>
+                Iniciar Audio
+            </button>
+            <button id="stopButton" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300" disabled>
+                Detener Audio
+            </button>
+        </div>
+        
+        <!-- Elemento de Audio (ahora solo como indicador visual) -->
+        <p class="text-center text-gray-500 text-sm">El audio se reproducirá por tus altavoces.</p>
+
+        <!-- Mensaje de Estado -->
+        <div id="status" class="text-center text-yellow-400 mt-4 h-5"></div>
+    </div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const status = document.getElementById('status');
+        const rnnoiseCheckbox = document.getElementById('rnnoise');
+
+        let localStream;
+        let audioContext;
+        let scriptProcessor;
+        let mediaStreamSource;
+        let preprocessor; // Ahora será una instancia de RNNoise
+
+        // 2. Definir el tamaño del buffer
+        // RNNoise REQUIERE un tamaño de buffer de 480 samples.
+        const BUFFER_SIZE = 480; 
+
+        // --- NUEVA LÓGICA DE CARGA SEGURA ---
+        
+        // 1. Mantener el botón deshabilitado y mostrar el estado de carga
+        status.textContent = 'Cargando librería (rnnoise.js)...';
+
+        // 2. Usar 'window.onload' para esperar a que *todos* los scripts se carguen
+        window.addEventListener('load', () => {
+            if (typeof Rnnoise !== 'undefined') {
+                // ¡Éxito! La librería se cargó.
+                startButton.disabled = false;
+                status.textContent = 'Librería cargada. Listo para iniciar.';
+            } else {
+                // Fallo. El CDN puede estar bloqueado o caído.
+                startButton.disabled = true;
+                status.textContent = 'Error: No se pudo cargar rnnoise.js desde el CDN.';
+                console.error("El objeto 'Rnnoise' no está definido. La librería de CDN falló al cargar.");
+            }
+        });
+        // --- FIN DE LA NUEVA LÓGICA ---
+
+        startButton.onclick = async () => {
+            startButton.disabled = true;
+            status.textContent = 'Cargando librería WASM...';
+
+            try {
+                // Chequeo de seguridad extra
+                if (typeof Rnnoise === 'undefined') {
+                    status.textContent = 'Error: Rnnoise no definido. Refresque la página.';
+                    console.error("Se hizo clic en Iniciar, pero Rnnoise sigue sin estar definido.");
+                    startButton.disabled = true; // Mantener deshabilitado
+                    return;
+                }
+                
+                // 3. Obtener el stream de audio *sin* procesamiento nativo.
+                const constraints = {
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    },
+                    video: false
+                };
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+                // --- ¡ESTA ES LA CORRECCIÓN! ---
+                // 4. Esperar a que el módulo WebAssembly de RNNoise se cargue
+                // Rnnoise es el objeto global que nos da la librería
+                await Rnnoise.init(); 
+                // --- FIN DE LA CORRECCIÓN ---
+
+                // 5. Configurar la Web Audio API
+                status.textContent = 'Iniciando AudioContext...';
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 6. Inicializar el preprocesador RNNoise (ahora seguro)
+                preprocessor = new Rnnoise();
+
+                // 7. Crear un ScriptProcessorNode para procesar el audio
+                // Usamos el tamaño de buffer EXACTO que RNNoise necesita.
+                scriptProcessor = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
+
+                // 8. El corazón de la demo: el evento onaudioprocess
+                scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                    const input = audioProcessingEvent.inputBuffer.getChannelData(0);
+                    const output = audioProcessingEvent.outputBuffer.getChannelData(0);
+
+                    if (rnnoiseCheckbox.checked) {
+                        // Si el interruptor está activado, procesar el audio con RNNoise
+                        // RNNoise procesa el audio "in-place" (modifica el array de entrada)
+                        // pero por claridad, lo pasaremos y asignaremos al de salida.
+                        const processedData = preprocessor.process(input);
+                        
+                        // Copiar los datos procesados al buffer de salida
+                        for (let i = 0; i < processedData.length; i++) {
+                            output[i] = processedData[i];
+                        }
+                    } else {
+                        // Si está desactivado, solo pasar el audio (raw)
+                        for (let i = 0; i < input.length; i++) {
+                            output[i] = input[i];
+                        }
+                    }
+                };
+
+                // 9. Crear la cadena de audio:
+                // Micrófono -> ScriptProcessor (para RNNoise) -> Altavoces
+                mediaStreamSource = audioContext.createMediaStreamSource(localStream);
+                mediaStreamSource.connect(scriptProcessor);
+                scriptProcessor.connect(audioContext.destination);
+
+                stopButton.disabled = false;
+                status.textContent = '¡Audio iniciado! Habla ahora.';
+
+            } catch (error) {
+                console.error('Error al iniciar audio:', error);
+                status.textContent = 'Error al iniciar audio. Revisa la consola.';
+                startButton.disabled = false;
+            }
+        };
+
+        stopButton.onclick = () => {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (audioContext) {
+                audioContext.close().catch(console.error);
+            }
+            if (preprocessor) {
+                preprocessor.destroy(); // Liberar memoria de WebAssembly
+            }
+
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            status.textContent = 'Audio detenido.';
+        };
+
+    </script>
+</body>
+</html>

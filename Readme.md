@@ -2,8 +2,7 @@
 
 ## Instalación de dependencias
 
-pip install "fastapi[all]" uvicorn faster-whisper python-multipart
-pip install fastapi-cors
+pip install "fastapi[all]" uvicorn faster-whisper python-multipart fastapi-cors
 
 
 ## Api de whisper
@@ -26,7 +25,11 @@ uvicorn api_whisper:app --host 127.0.0.1 --port 8000
 uvicorn api_vad:app --host 127.0.0.1 --port 8001
 
 ## Correr web cliente:
+cd client
 python -m http.server 8080
+
+## Correr llm proxy(error cors):
+uvicorn api_llm:app --host 0.0.0.0 --port 3001
 
 ## Probar endpoint de traducción:
 test_vad_whisper.html
@@ -51,3 +54,13 @@ Si el usuario pide que no hables(por ejemplo, "silencio"), no debes responder na
 La respuesta no debe exceder las 50 palabras.
 
 
+
+## Probar whisper.cpp
+curl 127.0.0.1:8080/inference \
+    -H "Content-Type: multipart/form-data" \
+    -F file="@<file-path>" \
+    -F temperature="0.0" \
+    -F temperature_inc="0.2" \
+    -F response_format="json"
+
+    

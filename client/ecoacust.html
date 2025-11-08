@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba de TTS y Cancelación de Eco</title>
+    <!-- 1. Carga de Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. Carga de la fuente Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* Usamos Inter como fuente principal */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg space-y-8">
+        
+        <h1 class="text-3xl font-bold text-center text-blue-400">Prueba de TTS y Cancelación de Eco</h1>
+
+        <!-- Sección de Texto a Voz (TTS) -->
+        <section class="space-y-4">
+            <h2 class="text-xl font-semibold border-b border-gray-700 pb-2">1. Reproducir Audio (TTS)</h2>
+            
+            <!-- Mensaje de error de la API -->
+            <div id="tts-api-warning" class="hidden bg-red-800 p-3 rounded-md text-center text-red-100">
+                Tu navegador no soporta la API de Texto a Voz (SpeechSynthesis).
+            </div>
+
+            <div>
+                <label for="tts-text" class="block text-sm font-medium text-gray-300 mb-2">Texto para reproducir:</label>
+                <textarea id="tts-text" rows="3" class="w-full bg-gray-700 text-white p-3 rounded-md border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Escribe algo aquí...">¡Hola! Esto es una prueba de texto a voz.</textarea>
+            </div>
+            
+            <!-- NUEVO: Selector de Voz -->
+            <div>
+                <label for="voice-select" class="block text-sm font-medium text-gray-300 mb-2">Voz (Español):</label>
+                <select id="voice-select" class="w-full bg-gray-700 text-white p-3 rounded-md border border-gray-600 focus:ring-2 focus:ring-blue-500 focus:outline-none disabled:opacity-50">
+                    <option value="">Cargando voces...</option>
+                </select>
+            </div>
+
+            <button id="speak-btn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-md transition duration-200 shadow-lg disabled:opacity-50" disabled>
+                Hablar
+            </button>
+        </section>
+
+        <!-- Sección de Grabación (AEC) -->
+        <section class="space-y-4">
+            <h2 class="text-xl font-semibold border-b border-gray-700 pb-2">2. Grabar Audio (con AEC)</h2>
+            <p class="text-sm text-gray-400">
+                Instrucciones: Inicia la grabación y, mientras grabas, presiona el botón "Hablar" de arriba. Habla al mismo tiempo. La grabación final debería cancelar el eco de la voz del TTS.
+            </p>
+            
+            <!-- Controles de Grabación -->
+            <div class="grid grid-cols-2 gap-4">
+                <button id="start-btn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md transition duration-200 shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <!-- Icono de Iniciar -->
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd"></path></svg>
+                    <span>Iniciar Grabación</span>
+                </button>
+                <button id="stop-btn" disabled class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-md transition duration-200 shadow-lg flex items-center justify-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <!-- Icono de Detener -->
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 8a2 2 0 012-2h0a2 2 0 012 2v4a2 2 0 01-2 2h0a2 2 0 01-2-2V8z" clip-rule="evenodd"></path></svg>
+                    <span>Detener Grabación</span>
+                </button>
+            </div>
+
+            <!-- Estado y Reproducción -->
+            <div id="status" class="text-center text-gray-400 h-6"></div>
+            
+            <div id="audio-playback-section" class="hidden space-y-2">
+                <h3 class="text-lg font-semibold text-gray-200">Grabación Resultante:</h3>
+                <audio id="audio-playback" controls class="w-full"></audio>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Elementos del DOM ---
+            const speakBtn = document.getElementById('speak-btn');
+            const ttsText = document.getElementById('tts-text');
+            const voiceSelect = document.getElementById('voice-select'); // NUEVO
+            const ttsApiWarning = document.getElementById('tts-api-warning'); // NUEVO
+            
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const status = document.getElementById('status');
+            
+            const audioPlaybackSection = document.getElementById('audio-playback-section');
+            const audioPlayback = document.getElementById('audio-playback');
+
+            // --- Estado de la Grabación ---
+            let mediaRecorder = null;
+            let audioChunks = [];
+            let isRecording = false;
+            let mediaStream = null;
+
+            // --- Lógica de Texto a Voz (TTS) ---
+            
+            // Comprobación inicial de la API
+            if (!('speechSynthesis' in window)) {
+                ttsApiWarning.classList.remove('hidden');
+                speakBtn.disabled = true;
+                voiceSelect.disabled = true;
+                return; // No continuar con la lógica de TTS si no es compatible
+            }
+
+            let voices = []; // Almacén para las voces
+
+            /**
+             * NUEVO: Función para poblar la lista de voces.
+             * Se filtra por voces en español.
+             */
+            function populateVoiceList() {
+                voices = speechSynthesis.getVoices().filter(voice => voice.lang.startsWith('es-'));
+                
+                voiceSelect.innerHTML = ''; // Limpiar opciones anteriores
+                
+                if (voices.length > 0) {
+                    voices.forEach(voice => {
+                        const option = document.createElement('option');
+                        option.textContent = `${voice.name} (${voice.lang})`;
+                        option.setAttribute('data-lang', voice.lang);
+                        option.setAttribute('data-name', voice.name);
+                        voiceSelect.appendChild(option);
+                    });
+                    speakBtn.disabled = false; // Habilitar el botón de hablar
+                    voiceSelect.disabled = false;
+                } else {
+                    voiceSelect.innerHTML = '<option value="">No se encontraron voces en español</option>';
+                    voiceSelect.disabled = true;
+                    // NOTA: Aún podríamos intentar hablar con 'es-ES', el navegador podría tener un default.
+                    // Vamos a dejar el botón habilitado por si acaso.
+                    speakBtn.disabled = false;
+                }
+            }
+
+            // --- Carga de Voces (Asíncrono) ---
+            // 1. Intentar cargar inmediatamente
+            populateVoiceList();
+            // 2. Asignar el evento 'onvoiceschanged' que se dispara cuando
+            //    la lista de voces está lista o se actualiza.
+            if (speechSynthesis.onvoiceschanged !== undefined) {
+                speechSynthesis.onvoiceschanged = populateVoiceList;
+            }
+
+            /**
+             * NUEVO: Lógica de 'Hablar' actualizada
+             */
+            speakBtn.addEventListener('click', () => {
+                const text = ttsText.value.trim();
+                if (text === '') return;
+
+                if (speechSynthesis.speaking) {
+                    speechSynthesis.cancel();
+                }
+
+                const utterance = new SpeechSynthesisUtterance(text);
+                
+                // Buscar la voz seleccionada en el dropdown
+                const selectedVoiceName = voiceSelect.selectedOptions[0]?.getAttribute('data-name');
+                const selectedVoice = voices.find(voice => voice.name === selectedVoiceName);
+
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                    utterance.lang = selectedVoice.lang; // Asegurarse de que el lang coincida
+                } else {
+                    // Fallback si no se seleccionó ninguna (o no se encontraron)
+                    utterance.lang = 'es-ES'; 
+                }
+                
+                utterance.onerror = (event) => {
+                    console.error('Error en SpeechSynthesis:', event.error);
+                    status.textContent = 'Error al reproducir voz.';
+                };
+
+                speechSynthesis.speak(utterance);
+            });
+
+            // --- Lógica de Grabación (AEC) ---
+            
+            /**
+             * Inicia la grabación del audio.
+             * Pide permiso para el micrófono con la Cancelación de Eco (AEC) activada.
+             */
+            async function startRecording() {
+                if (isRecording) return;
+
+                // 1. Definir las restricciones (AEC activado)
+                const constraints = {
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                };
+
+                try {
+                    // 2. Solicitar acceso al micrófono
+                    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    
+                    isRecording = true;
+                    audioChunks = [];
+                    status.textContent = 'Grabando... Habla ahora.';
+
+                    // 3. Crear el MediaRecorder
+                    mediaRecorder = new MediaRecorder(mediaStream);
+
+                    // 4. Evento para cuando hay datos de audio disponibles
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+
+                    // 5. Evento para cuando la grabación se detiene
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        
+                        audioPlayback.src = audioUrl;
+                        audioPlaybackSection.classList.remove('hidden');
+
+                        mediaStream.getTracks().forEach(track => track.stop());
+                        mediaStream = null;
+                    };
+
+                    // 6. Iniciar la grabación
+                    mediaRecorder.start();
+
+                    // 7. Actualizar la UI de los botones
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+
+                } catch (err) {
+                    console.error('Error al acceder al micrófono:', err);
+                    status.textContent = 'Error al acceder al micrófono. Revisa los permisos.';
+                    if (err.name === "NotAllowedError") {
+                        status.textContent = 'Permiso de micrófono denegado.';
+                    } else if (err.name === "NotFoundError") {
+                        status.textContent = 'No se encontró ningún micrófono.';
+                    }
+                }
+            }
+
+            /**
+             * Detiene la grabación de audio.
+             */
+            function stopRecording() {
+                if (!isRecording || !mediaRecorder) return;
+
+                mediaRecorder.stop();
+                isRecording = false;
+                status.textContent = 'Grabación detenida. Procesando...';
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                
+                setTimeout(() => {
+                    if (!isRecording) status.textContent = 'Listo. Reproduce tu grabación.';
+                }, 500);
+            }
+
+            // --- Asignar Eventos a Botones de Grabación ---
+            startBtn.addEventListener('click', startRecording);
+            stopBtn.addEventListener('click', stopRecording);
+        });
+    </script>
+</body>
+</html>

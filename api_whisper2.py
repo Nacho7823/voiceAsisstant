@@ -1,4 +1,5 @@
 '''
+
 Endpoints
 ---------
 GET /models
@@ -19,21 +20,12 @@ POST /translate_stream
 
 POST /stop/{job_id}
     - Descripción: Solicita la parada de una transcripción en curso.
+
+
 '''
 
 '''
 GGML_VULKAN=1 pip install git+https://github.com/absadiki/pywhispercpp
-'''
-    
-    
-'''
-llamada a whisper.cpp
-curl 127.0.0.1:8080/inference \
--H "Content-Type: multipart/form-data" \
--F file="@<file-path>" \
--F temperature="0.0" \
--F temperature_inc="0.2" \
--F response_format="json"
 '''
 
 
@@ -75,9 +67,8 @@ print(f"Model cache dir: {MODELS_DIR}")
 # ------------------
 
 # --- Configuración (Modifica esto según tu PC) ---
-# COMPUTE_DEVICE = "cpu"  # Opciones: "cpu", "cuda", "mps"
-COMPUTE_DEVICE = "cuda"  # Opciones: "cpu", "cuda", "mps"
-COMPUTE_TYPE = "float32"  # Opciones: "int8", "int16", "float16", "float32"
+COMPUTE_DEVICE = "cpu"  # Opciones: "cpu", "cuda", "mps"
+COMPUTE_TYPE = "int16"  # Opciones: "int8", "int16", "float16", "float32"
 # ----------------------------------------------------
 
 availableModels = ["tiny", "base", "small", "medium", "large-v2", "large-v3"]
@@ -109,7 +100,7 @@ def get_model(model_size: str) -> WhisperModel:
     if model_size not in model_cache:
         print(f"Cargando modelo '{model_size}' en {COMPUTE_DEVICE}...")
         try:
-            model = WhisperModel(model_size, device=COMPUTE_DEVICE, compute_type=COMPUTE_TYPE, cpu_threads=8)
+            model = WhisperModel(model_size, device=COMPUTE_DEVICE, compute_type=COMPUTE_TYPE)
             model_cache[model_size] = model
             print(f"Modelo '{model_size}' cargado y listo.")
         except Exception as e:

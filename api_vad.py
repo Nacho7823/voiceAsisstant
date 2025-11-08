@@ -1,3 +1,10 @@
+'''
+install torch with cuda
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install torchaudio --index-url https://download.pytorch.org/whl/cu121
+'''
+
+
 import uvicorn
 import torch
 import numpy as np
