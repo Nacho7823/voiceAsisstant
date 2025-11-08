@@ -19,10 +19,7 @@ MODEL="openai/gpt-4.1"
 API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx" 
 
 # Orígenes permitidos (tu frontend)
-origins = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-]
+origins = ["*"]
 
 # --- APLICACIÓN FASTAPI ---
 
@@ -46,6 +43,8 @@ async def proxy_chat_completions(request: Request):
     Esta ruta recibe la petición de tu frontend,
     le añade la API key real, y la reenvía a la API de OpenAI.
     """
+    print("[Proxy] Nueva petición de chat/completions recibida")
+    print("[Proxy] Datos recibidos:", await request.json())
     try:
         # 1. Lee el JSON que envió tu frontend
         data = await request.json()

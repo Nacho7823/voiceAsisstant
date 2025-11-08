@@ -28,6 +28,9 @@ const ttsToggle = document.getElementById('tts-toggle');
 // --- Configuración de endpoints y tiempos ---
 const VAD_API_URL = "ws://127.0.0.1:8001/ws/vad";
 const WHISPER_API_URL = "http://127.0.0.1:8000/translate";
+const LLM_API_URL = "http://localhost:3002/v1/chat/completions";
+const LLM_MODEL_NAME = "openai/gpt-4.1"
+const LLM_API_KEY = ""; // Poner aquí la API Key por defecto si se desea
 
 const SAMPLE_RATE = 16000;
 const POST_ROLL_TIME = 1 * 1000; // ms
@@ -86,11 +89,11 @@ async function sendSpeechBufferToWhisperAndLLM() {
 
       // Enviar a LLM
       try {
-        log('Enviando a LLM...', 'processing');
+        log('Enviando a LLM...', trimmed, 'processing');
         const response = await llm.complete({
-          apiUrl: llmApiUrl.value.trim(),
-          apiKey: llmApiKey.value.trim(),
-          modelName: llmModelName.value.trim(),
+          apiUrl: LLM_API_URL,
+          apiKey: LLM_API_KEY,
+          modelName: LLM_MODEL_NAME,
           prompt: llmPrompt.value.trim(),
           text: trimmed
         });

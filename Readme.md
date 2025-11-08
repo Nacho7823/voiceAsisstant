@@ -16,6 +16,7 @@ curl -X 'POST' \
 ## Iniciar
 uv venv -p 3.11 .venv
 .\.venv\Scripts\activate
+source .venvl/bin/activate 
 
 
 ## Correr servidor whisper(audio -> texto):
@@ -25,8 +26,7 @@ uvicorn api_whisper:app --host 127.0.0.1 --port 8000
 uvicorn api_vad:app --host 127.0.0.1 --port 8001
 
 ## Correr web cliente:
-cd client
-python -m http.server 8080
+python api_client.py 
 
 ## Correr llm proxy(error cors):
 uvicorn api_llm:app --host 0.0.0.0 --port 3001
@@ -63,4 +63,13 @@ curl 127.0.0.1:8080/inference \
     -F temperature_inc="0.2" \
     -F response_format="json"
 
-    
+
+## Probar proxy llm
+http://localhost:3002/api/v1/chat/completions
+openai/gpt-4.1
+
+## Correr whisper.cpp localmente
+
+LD_LIBRARY_PATH=/mnt/sda3/AI/whisper.cpp/install/ /mnt/sda3/AI/whisper.cpp/install/whisper-server -m /mnt/sda3/AI/whisper.cpp/models/ggml-small.bin
+
+LD_LIBRARY_PATH=/mnt/sda3/AI/whisper.cpp/install/ /mnt/sda3/AI/whisper.cpp/install/whisper-server -m /mnt/sda3/AI/whisper.cpp/models/ggml-medium.bin 
