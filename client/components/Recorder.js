@@ -4,6 +4,8 @@
 // Exporta la clase Recorder con una API mínima para integrarse con VAD / orquestador.
 
 
+import AudioBufferManager from './audioBuffer.js';
+
 export default class Recorder {
   constructor({ sampleRate = 16000, preRollTime = 2, constraints = {} } = {}) {
     this.sampleRate = sampleRate;
@@ -23,7 +25,7 @@ export default class Recorder {
     this.mediaStreamSource = null;
 
     this.preRollBuffer = new Float32Array(0);
-    this.speechBuffer = new Float32Array(0);
+    this.audioBufferManager = new AudioBufferManager();
 
     this.isRecording = false; // controlado externamente vía markSpeechStart/End
     this.onAudioCallback = null;
@@ -119,15 +121,8 @@ export default class Recorder {
   // Llamar cuando VAD notifique speech_start
   markSpeechStart() {
     if (this.isRecording) return;
-    // si hay pre-roll, lo incorporamos al speechBuffer
-    if (this.preRollBuffer.length > 0) {
-      this.speechBuffer = new Float32Array(this.preRollBuffer.length);
-      this.speechBuffer.set(this.preRollBuffer);
-      this.preRollBuffer = new Float32Array(0);
-    } else {
-      this.speechBuffer = new Float32Array(0);
-    }
     this.isRecording = true;
+    this.audioBufferManager.startSpeech();
   }
 
   // Llamar cuando VAD notifique speech_end
@@ -135,17 +130,18 @@ export default class Recorder {
     this.isRecording = false;
   }
 
-  getSpeechBuffer() { return this.speechBuffer; }
+  getSpeechBuffer() {
+    return this.audioBufferManager.getBuffer();
+  }
 
-  clearSpeechBuffer() { this.speechBuffer = new Float32Array(0); }
+  clearSpeechBuffer() {
+    this.audioBufferManager.clear();
+  }
 
   // Interno: gestionar pre-roll / speech append
   _handleAudioData(audioData) {
     if (this.isRecording) {
-      const newBuf = new Float32Array(this.speechBuffer.length + audioData.length);
-      newBuf.set(this.speechBuffer);
-      newBuf.set(audioData, this.speechBuffer.length);
-      this.speechBuffer = newBuf;
+      this.audioBufferManager.push(audioData);
     } else {
       const newBuf = new Float32Array(this.preRollBuffer.length + audioData.length);
       newBuf.set(this.preRollBuffer);

@@ -11,22 +11,37 @@ export default class LLM {
   /**
    * Envía texto a la API del LLM y devuelve la respuesta como string.
    * Intenta manejar la forma típica de "chat completions".
+   * Ahora soporta un array de mensajes (para historial de chat).
    */
-  async complete({ apiUrl, apiKey, modelName, prompt = '', text = '' } = {}) {
+  async complete({ apiUrl, apiKey, modelName, systemPrompt = '', messages = [], text = '' } = {}) {
     if (!apiUrl || !apiKey || !modelName) {
       throw new Error('LLM: falta apiUrl, apiKey o modelName');
     }
 
-    let fullPrompt = text;
-    if (prompt && prompt.trim()) {
-      fullPrompt = `${prompt}\n\n"${text}"`;
+    let chatMessages = [];
+    if (Array.isArray(messages) && messages.length > 0) {
+      chatMessages = messages.map(m => ({
+        role: m.role || 'user',
+        content: m.text || m.content || ''
+      }));
+    } else {
+      let fullPrompt = text;
+      if (prompt && prompt.trim()) {
+        fullPrompt = `${prompt}\n\n"${text}"`;
+      }
+      chatMessages = [{ role: 'user', content: fullPrompt }];
     }
+
+    // add system prompt if provided
+    if (systemPrompt && systemPrompt.trim()) {
+      chatMessages.unshift({ role: 'system', content: systemPrompt });
+    }
+
+    console.log('LLM.complete chatMessages:', chatMessages);
 
     const payload = {
       model: modelName,
-      messages: [
-        { role: 'user', content: fullPrompt }
-      ]
+      messages: chatMessages
     };
 
     const headers = {

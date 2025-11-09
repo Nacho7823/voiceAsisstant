@@ -33,7 +33,7 @@ const LLM_MODEL_NAME = "openai/gpt-4.1"
 const LLM_API_KEY = ""; // Poner aquí la API Key por defecto si se desea
 
 const SAMPLE_RATE = 16000;
-const POST_ROLL_TIME = 1 * 1000; // ms
+const POST_ROLL_TIME = 2 * 1000; // ms
 
 // --- Instancias de componentes ---
 let recorder = null;
@@ -43,6 +43,10 @@ let llm = null;
 let tts = null;
 
 let postRollTimer = null;
+
+let chatHistory = [];
+//add system message
+// chatHistory.push({ role: 'system', text: 'Eres un asistente útil y amable que responde de manera concisa.' });
 
 // --- Utilidades UI ---
 function log(message, state = 'idle') {
@@ -56,6 +60,14 @@ function log(message, state = 'idle') {
 }
 
 function addMessageToChat(role, text) {
+  // Solo agregar mensajes válidos y evitar duplicados consecutivos
+  if (
+    chatHistory.length === 0 ||
+    chatHistory[chatHistory.length - 1].role !== role ||
+    chatHistory[chatHistory.length - 1].text !== text
+  ) {
+    chatHistory.push({ role, text });
+  }
   const bubble = document.createElement('div');
   bubble.classList.add('chat-bubble', role);
   bubble.textContent = text;
@@ -63,82 +75,77 @@ function addMessageToChat(role, text) {
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
-// --- Flujo: enviar audio a Whisper y LLM ---
-async function sendSpeechBufferToWhisperAndLLM() {
-  try {
-    const speechBuf = recorder.getSpeechBuffer();
-    // No enviar si demasiado corto
-    if (!speechBuf || speechBuf.length < (SAMPLE_RATE * 0.5)) {
-      log('Audio demasiado corto, descartado.', 'idle');
-      recorder.clearSpeechBuffer();
+let speaking = false;
+let ttsSpeaking = false;
+let textQuery = "";
+
+// --- Lógica principal basada en logic.md ---
+function setupVADLogic() {
+  vad.on('speech_start', () => {
+    statusLog.textContent = 'Detectado habla...';
+    vadLight.classList.add('speaking');
+    recorder.markSpeechStart();
+    speaking = true;
+    if (ttsSpeaking) {
+      tts.stop();
+      ttsSpeaking = false;
+    }
+  });
+
+  vad.on('speech_end', async () => {
+    vadLight.classList.remove('speaking');
+    statusLog.textContent = 'Detectado fin de habla...';
+    speaking = false;
+    // Esperar post-roll antes de procesar
+    await new Promise(resolve => setTimeout(resolve, POST_ROLL_TIME));
+    if(speaking) {
+      // Se ha reactivado el habla durante el post-roll
       return;
     }
+    statusLog.textContent = 'Procesando...';
 
-    log('Traduciendo (Whisper)...', 'processing');
-    const wavBlob = recorder.createWavBlob(speechBuf);
-    recorder.clearSpeechBuffer();
+    recorder.markSpeechEnd();
+    const buffer = recorder.getSpeechBuffer();
 
-    const transcription = await whisper.transcribe(wavBlob, {
-      modelSize: modelSelect.value,
-      language: languageSelect.value
-    });
+    // Reconocimiento ASR
+    let wavBlob = recorder.createWavBlob(buffer);
+    let transcript = await whisper.transcribe(wavBlob);
 
-    if (transcription && transcription.trim()) {
-      const trimmed = transcription.trim();
-      addMessageToChat('user', trimmed);
-
-      // Enviar a LLM
-      try {
-        log('Enviando a LLM...', trimmed, 'processing');
-        const response = await llm.complete({
-          apiUrl: LLM_API_URL,
-          apiKey: LLM_API_KEY,
-          modelName: LLM_MODEL_NAME,
-          prompt: llmPrompt.value.trim(),
-          text: trimmed
-        });
-
-        if (response && response.trim()) {
-          const finalText = response.trim();
-          addMessageToChat('assistant', finalText);
-
-          if (ttsToggle.checked) {
-            // Determinar idioma para TTS
-            let targetLang = 'en-US';
-            const sel = languageSelect.value;
-            if (sel && sel.length > 0 && sel !== 'en') {
-              targetLang = sel;
-            } else if (sel === 'en') {
-              targetLang = 'en-US';
-            }
-            // speak (fire-and-forget; TTSEngine gestiona eventos)
-            try {
-              await tts.speak(finalText, { lang: targetLang });
-              // onend del TTS volverá a 'Escuchando...'
-            } catch (err) {
-              console.error('TTS speak error', err);
-              log('Escuchando...', 'idle');
-            }
-          } else {
-            log('Escuchando...', 'idle');
-          }
-        } else {
-          log('Escuchando...', 'idle');
-        }
-      } catch (err) {
-        console.error('Error LLM', err);
-        log(`Error de LLM: ${err.message}`, 'error');
-        addMessageToChat('error', `Error de LLM: ${err.message}`);
-      }
-
+    if (speaking) {
+      textQuery += transcript;
+      console.log('Habla reanudada, acumulando texto:', textQuery);
+      // La próxima llamada mandará el texto completo a LLM
     } else {
-      log('Escuchando...', 'idle');
+      textQuery += transcript;
+      // Enviar a LLM y TTS
+      try {
+        addMessageToChat('user', textQuery);
+        const textToSend = chatHistory.length > 0 ? chatHistory : [{ role: 'user', text: textQuery }];
+        textQuery = ""; // resetear consulta
+
+        log('Generando respuesta...', 'processing');
+        console.log('Enviando a LLM:', textToSend);
+
+        const systemPrompt = llmPrompt.value.trim();
+
+        const response = await llm.complete({
+          apiUrl: llmApiUrl.value || LLM_API_URL,
+          apiKey: llmApiKey.value || LLM_API_KEY,
+          modelName: llmModelName.value || LLM_MODEL_NAME,
+          systemPrompt: systemPrompt,
+          messages: textToSend
+        });
+        addMessageToChat('system', response);
+
+        statusLog.textContent = 'Esperando habla...';
+
+        await tts.speak(response);
+        ttsSpeaking = true;
+      } catch (err) {
+        console.error('Error en LLM o TTS', err);
+      }
     }
-  } catch (err) {
-    console.error('Error al procesar audio:', err);
-    log(`Error de Whisper: ${err.message || err}`, 'error');
-    addMessageToChat('error', `Error de Whisper: ${err.message || err}`);
-  }
+  });
 }
 
 // --- Start / Stop ---
@@ -175,40 +182,7 @@ async function startDetection() {
     await recorder.start();
     log('Micrófono activo. Escuchando...', 'idle');
 
-    // Eventos VAD
-    vad.on('speech_start', () => {
-      // Cancelar TTS si interrumpe
-      if (tts && tts.isPlaying && tts.isPlaying()) {
-        tts.stop();
-      }
-
-      log('Hablando...', 'speaking');
-
-      // Cancelar post-roll si existía
-      if (postRollTimer) {
-        clearTimeout(postRollTimer);
-        postRollTimer = null;
-      }
-
-      // Indicar al recorder que arranque
-      recorder.markSpeechStart();
-    });
-
-    vad.on('speech_end', () => {
-      log('Fin de voz detectado...', 'processing');
-      // Indicar fin de grabación y arrancar post-roll
-      recorder.markSpeechEnd();
-      if (postRollTimer) clearTimeout(postRollTimer);
-      postRollTimer = setTimeout(async () => {
-        postRollTimer = null;
-        await sendSpeechBufferToWhisperAndLLM();
-      }, POST_ROLL_TIME);
-    });
-
-    vad.on('error', (e) => {
-      console.error('VAD error', e);
-      log('Error de VAD', 'error');
-    });
+    setupVADLogic();
 
     // TTSEngine events (solo para UI)
     tts.on('start', () => {
@@ -271,7 +245,10 @@ async function stopDetection() {
 // --- Event listeners UI ---
 startBtn.addEventListener('click', startDetection);
 stopBtn.addEventListener('click', stopDetection);
-clearBtn.addEventListener('click', () => { chatContainer.innerHTML = ''; });
+clearBtn.addEventListener('click', () => {
+  chatContainer.innerHTML = '';
+  chatHistory = [];
+});
 
 // Inicializar estado UI
 log('Haz clic en "Iniciar" para comenzar', 'idle');

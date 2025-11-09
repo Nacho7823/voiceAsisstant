@@ -11,7 +11,7 @@ class CORSRequestHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 def run_server():
-    PORT = 3003
+    PORT = 3004
     handler = partial(CORSRequestHandler, directory="client")
     with TCPServer(("", PORT), handler) as httpd:
         print(f"Serving on port {PORT}")
